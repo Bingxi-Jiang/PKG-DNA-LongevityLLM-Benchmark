@@ -157,6 +157,12 @@ Rebuild the benchmark:
 python -B build_benchmark.py
 ```
 
+The top-level script is a thin wrapper. The same builder can also be called as:
+
+```bash
+python -m longevity_benchmark.build --no-preview
+```
+
 Generated files:
 
 ```text
@@ -179,6 +185,7 @@ Useful options:
 python evaluate.py --task effect --limit 10
 python evaluate.py --task pairwise --think
 python evaluate.py --endpoint https://<endpoint>/v1
+python evaluate.py --input-dir output --eval-dir output/eval
 ```
 
 ## Scoring
@@ -195,6 +202,19 @@ The evaluator strips model thinking traces before parsing final answers.
 |-- build_benchmark.py
 |-- evaluate.py
 |-- README.md
+|-- longevity_benchmark/
+|   |-- build.py              # build orchestration and CLI args
+|   |-- config.py             # label policy, paths, sampling parameters
+|   |-- io.py                 # JSONL read/write helpers
+|   |-- mgi.py                # MGI table loading and label extraction
+|   |-- prompts.py            # allele descriptions and metadata
+|   |-- splits.py             # leakage-aware split and balancing
+|   |-- tasks.py              # effect and pairwise task builders
+|   |-- validation.py         # generated-record sanity checks
+|   `-- eval/
+|       |-- cli.py            # evaluation CLI
+|       |-- parsing.py        # model-output parsers
+|       `-- runner.py         # endpoint calls, logging, metrics
 |-- data/
 |   `-- mgi/
 |       |-- MGI_PhenoGenoMP.rpt
@@ -209,3 +229,20 @@ The evaluator strips model thinking traces before parsing final answers.
 
 Legacy `mgi_ternary_*` files may exist in local output directories from older
 builds, but they are not part of the current recommended benchmark.
+
+## Extending
+
+The code is split so new prototype tasks can be added without editing the full
+pipeline:
+
+1. Add task-specific record generation in `longevity_benchmark/tasks.py` or a
+   new module under `longevity_benchmark/tasks/` if it grows.
+2. Reuse `mgi.py` for source tables, `splits.py` for leakage-aware cohorts, and
+   `prompts.py` for allele descriptions.
+3. Register the new record list in `longevity_benchmark/build.py` and save it
+   with `save_split_records`.
+4. Add an output parser or metric branch under `longevity_benchmark/eval/` if
+   the answer format differs from binary or pairwise.
+
+The intended shape is: data extraction -> split/balance -> task record builder
+-> JSONL writer -> evaluator parser/metric.
