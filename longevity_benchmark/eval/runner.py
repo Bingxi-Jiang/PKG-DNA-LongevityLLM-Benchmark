@@ -5,6 +5,12 @@ from __future__ import annotations
 import json
 import os
 import time
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ModuleNotFoundError:
+    pass
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -15,7 +21,7 @@ from ..io import load_jsonl
 from .parsing import PARSERS, strip_think
 
 
-DEFAULT_ENDPOINT = "https://sqrq2pj09htgequ0.us-east-2.aws.endpoints.huggingface.cloud/v1"
+DEFAULT_ENDPOINT = "https://swchnq0ekc3scmqw.us-east-2.aws.endpoints.huggingface.cloud/v1"
 MODEL = "longevity-llm"
 WORKERS = 6  # Stay <= 8 per hackathon guidance.
 
@@ -107,18 +113,15 @@ def run_eval(rows: list[dict], client, enable_thinking: bool, log_path: str | Pa
                     results.append(result)
                     log_file.write(json.dumps(result, ensure_ascii=False) + "\n")
                     log_file.flush()
-                    mark = "OK" if result["correct"] else "NO"
-                    print(
-                        f"  [{done}/{len(rows)}] {mark}"
-                        f"  pred={result['pred']!r:12s}"
-                        f"  gold={result['gold']!r}"
-                        f"  ({result['elapsed_s']}s)"
-                    )
                 except Exception as exc:  # noqa: BLE001
                     n_errors += 1
                     print(f"  [{done}/{len(rows)}] ERROR: {exc}")
+                    continue
+                correct = sum(r["correct"] for r in results)
+                acc = correct / len(results)
+                print(f"  [{done}/{len(rows)}]  acc={acc:.1%}  correct={correct}/{len(results)}  api_errors={n_errors}", end="\r", flush=True)
 
-    print(f"\n  Errors: {n_errors}/{len(rows)}")
+    print()
     return results
 
 
