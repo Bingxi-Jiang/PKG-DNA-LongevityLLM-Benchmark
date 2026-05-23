@@ -57,7 +57,7 @@ def make_effect_records(
                 "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
                 "format": "binary",
-                "metric": "balanced_accuracy",
+                "metric": "accuracy",
                 "units": None,
                 "task": config.task_description,
                 "messages": [
@@ -146,7 +146,7 @@ def make_ternary_records(
                 "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
                 "format": "ternary",
-                "metric": "balanced_accuracy",
+                "metric": "accuracy",
                 "units": None,
                 "task": config.task_description,
                 "messages": [
@@ -193,7 +193,7 @@ def make_set_generation_records(
                 "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
                 "format": "set_generation",
-                "metric": "set_f1",
+                "metric": "jaccard",
                 "units": None,
                 "task": config.task_description,
                 "messages": [

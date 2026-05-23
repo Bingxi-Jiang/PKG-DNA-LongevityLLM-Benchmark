@@ -23,10 +23,9 @@ def main() -> None:
             "pairwise",
             "regression",
             "sex_effect",
-            "both",
             "all",
         ],
-        default="both",
+        default="all",
     )
     parser.add_argument("--split", choices=["train", "test"], default="test")
     parser.add_argument("--think", action="store_true")
@@ -40,8 +39,6 @@ def main() -> None:
     Path(args.eval_dir).mkdir(parents=True, exist_ok=True)
     if args.task == "all":
         tasks = ALL_TASKS
-    elif args.task == "both":
-        tasks = ["effect", "pairwise"]
     else:
         tasks = [args.task]
 
