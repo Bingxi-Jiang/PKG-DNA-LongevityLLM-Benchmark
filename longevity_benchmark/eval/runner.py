@@ -91,7 +91,7 @@ def call_model(row: dict, client, enable_thinking: bool) -> dict:
         "elapsed_s": round(elapsed, 2),
         "prompt_tokens": response.usage.prompt_tokens,
         "total_tokens": response.usage.total_tokens,
-        "metadata": row.get("metadata", {}),
+        "metadata": row.get("metadata"),
     }
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 from itertools import product
 
@@ -51,19 +52,22 @@ def make_effect_records(
         records.append(
             {
                 "lb_id": "LB-MGI-001",
+                "pool": "mgi_directional_effect",
                 "display_name": "MGI Mouse Longevity / Directional Effect",
+                "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
                 "format": "binary",
                 "metric": "balanced_accuracy",
                 "units": None,
                 "task": config.task_description,
-                "split": row["split"],
-                "metadata": metadata_for_row(row),
                 "messages": [
                     {"role": "system", "content": config.system_prompt},
                     {"role": "user", "content": user},
                     {"role": "assistant", "content": row["label"]},
                 ],
+                "has_reasoning": False,
+                "metadata": json.dumps(metadata_for_row(row)),
+                "split": row["split"],
             }
         )
     return records
@@ -90,23 +94,26 @@ def make_mcq_records(
         records.append(
             {
                 "lb_id": "LB-MGI-003",
+                "pool": "mgi_mcq_effect",
                 "display_name": "MGI Mouse Longevity / Multiple Choice Effect",
+                "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
                 "format": "mcq",
                 "metric": "accuracy",
                 "units": None,
                 "task": config.task_description,
-                "split": row["split"],
-                "metadata": {
-                    **metadata_for_row(row),
-                    "options": {letter: text for letter, text in MCQ_OPTIONS},
-                    "gold_label": row["label"],
-                },
                 "messages": [
                     {"role": "system", "content": config.system_prompt},
                     {"role": "user", "content": user},
                     {"role": "assistant", "content": MCQ_ANSWER_BY_LABEL[row["label"]]},
                 ],
+                "has_reasoning": False,
+                "metadata": json.dumps({
+                    **metadata_for_row(row),
+                    "options": {letter: text for letter, text in MCQ_OPTIONS},
+                    "gold_label": row["label"],
+                }),
+                "split": row["split"],
             }
         )
     return records
@@ -134,19 +141,22 @@ def make_ternary_records(
         records.append(
             {
                 "lb_id": "LB-MGI-004",
+                "pool": "mgi_ternary_inconclusive",
                 "display_name": "MGI Mouse Longevity / Ternary Inconclusive",
+                "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
                 "format": "ternary",
                 "metric": "balanced_accuracy",
                 "units": None,
                 "task": config.task_description,
-                "split": row["split"],
-                "metadata": metadata_for_row(row),
                 "messages": [
                     {"role": "system", "content": config.system_prompt},
                     {"role": "user", "content": user},
                     {"role": "assistant", "content": row["label"]},
                 ],
+                "has_reasoning": False,
+                "metadata": json.dumps(metadata_for_row(row)),
+                "split": row["split"],
             }
         )
     return records
@@ -178,25 +188,28 @@ def make_set_generation_records(
         records.append(
             {
                 "lb_id": "LB-MGI-005",
+                "pool": "mgi_directional_mp_term_set",
                 "display_name": "MGI Mouse Longevity / Directional MP Term Set",
+                "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
                 "format": "set_generation",
                 "metric": "set_f1",
                 "units": None,
                 "task": config.task_description,
-                "split": row["split"],
-                "metadata": {
-                    **metadata_for_row(row),
-                    "candidate_mp_terms": [
-                        {"mp_id": mp_id, "mp_name": mp_name}
-                        for mp_id, mp_name in STRICT_DIRECTIONAL_MP_OPTIONS
-                    ],
-                },
                 "messages": [
                     {"role": "system", "content": config.system_prompt},
                     {"role": "user", "content": user},
                     {"role": "assistant", "content": gold_terms},
                 ],
+                "has_reasoning": False,
+                "metadata": json.dumps({
+                    **metadata_for_row(row),
+                    "candidate_mp_terms": [
+                        {"mp_id": mp_id, "mp_name": mp_name}
+                        for mp_id, mp_name in STRICT_DIRECTIONAL_MP_OPTIONS
+                    ],
+                }),
+                "split": row["split"],
             }
         )
     return records
@@ -254,14 +267,21 @@ def make_pairwise_records(
             records.append(
                 {
                     "lb_id": "LB-MGI-002",
+                    "pool": "mgi_pairwise",
                     "display_name": "MGI Mouse Longevity / Pairwise",
+                    "display_group": "MGI Mouse Longevity",
                     "domain": "genetics",
                     "format": "pairwise",
                     "metric": "accuracy",
                     "units": None,
                     "task": config.task_description,
-                    "split": split,
-                    "metadata": {
+                    "messages": [
+                        {"role": "system", "content": config.system_prompt},
+                        {"role": "user", "content": user},
+                        {"role": "assistant", "content": correct},
+                    ],
+                    "has_reasoning": False,
+                    "metadata": json.dumps({
                         "allele_A": str(a["allele_symbol"]),
                         "gene_A": str(a["marker_symbol"]),
                         "label_A": str(a["label"]),
@@ -270,12 +290,8 @@ def make_pairwise_records(
                         "label_B": str(b["label"]),
                         "component_splits": [str(a["split"]), str(b["split"])],
                         "pair_type": "Increased_vs_Decreased",
-                    },
-                    "messages": [
-                        {"role": "system", "content": config.system_prompt},
-                        {"role": "user", "content": user},
-                        {"role": "assistant", "content": correct},
-                    ],
+                    }),
+                    "split": split,
                 }
             )
 
@@ -303,14 +319,21 @@ def make_mpd_lifespan_regression_records(df: pd.DataFrame, config: BuildConfig) 
         records.append(
             {
                 "lb_id": "LB-MPD-006",
+                "pool": "mpd_yuan2_lifespan_regression",
                 "display_name": "MPD Yuan2 Mouse Lifespan / Regression",
+                "display_group": "MPD Yuan2 Mouse Lifespan",
                 "domain": "genetics",
                 "format": "regression",
-                "metric": "mae_days",
+                "metric": "mae",
                 "units": "days",
                 "task": "Given an inbred mouse strain and sex, predict median lifespan in days.",
-                "split": row["split"],
-                "metadata": {
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": gold},
+                ],
+                "has_reasoning": False,
+                "metadata": json.dumps({
                     "source": "MPD Yuan2",
                     "source_url": "https://phenome.jax.org/projects/Yuan2",
                     "measure_id": 23201,
@@ -320,12 +343,8 @@ def make_mpd_lifespan_regression_records(df: pd.DataFrame, config: BuildConfig) 
                     "stocknum": str(row.get("stocknum", "")),
                     "sex": str(row["sex_label"]),
                     "gold_days": int(row["median_lifespan_days"]),
-                },
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                    {"role": "assistant", "content": gold},
-                ],
+                }),
+                "split": row["split"],
             }
         )
     return records
@@ -348,18 +367,25 @@ def make_mpd_sex_effect_records(df: pd.DataFrame, config: BuildConfig) -> list[d
         records.append(
             {
                 "lb_id": "LB-MPD-007",
+                "pool": "mpd_yuan2_lifespan_sex_effect",
                 "display_name": "MPD Yuan2 Mouse Lifespan / Sex Effect",
+                "display_group": "MPD Yuan2 Mouse Lifespan",
                 "domain": "genetics",
                 "format": "ternary",
                 "parser": "sex_effect",
-                "metric": "balanced_accuracy",
+                "metric": "accuracy",
                 "units": None,
                 "task": (
                     "Given an inbred mouse strain, identify whether females, males, "
                     "or neither sex had significantly longer lifespan."
                 ),
-                "split": row["split"],
-                "metadata": {
+                "messages": [
+                    {"role": "system", "content": config.system_prompt},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": row["label"]},
+                ],
+                "has_reasoning": False,
+                "metadata": json.dumps({
                     "source": "MPD Yuan2",
                     "source_url": "https://phenome.jax.org/projects/Yuan2",
                     "measure_id": 23401,
@@ -374,12 +400,8 @@ def make_mpd_sex_effect_records(df: pd.DataFrame, config: BuildConfig) -> list[d
                     "p_value": float(row["p_value"]),
                     "alpha": 0.05,
                     "label_source": row["label_source"],
-                },
-                "messages": [
-                    {"role": "system", "content": config.system_prompt},
-                    {"role": "user", "content": user},
-                    {"role": "assistant", "content": row["label"]},
-                ],
+                }),
+                "split": row["split"],
             }
         )
     return records

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 
 from .config import LEAKY_CONTEXT_RE
@@ -40,7 +41,8 @@ def count_leaky_context(records: list[dict]) -> int:
 def effect_gene_overlap(effect_records: list[dict]) -> int:
     genes_by_split = {"train": set(), "test": set()}
     for record in effect_records:
-        genes_by_split[record["split"]].add(record["metadata"]["gene"])
+        metadata = json.loads(record["metadata"])
+        genes_by_split[record["split"]].add(metadata["gene"])
     return len(genes_by_split["train"] & genes_by_split["test"])
 
 
@@ -52,7 +54,7 @@ def pairwise_split_issues(pairwise_records: list[dict]) -> dict[str, Counter]:
     }
     for record in pairwise_records:
         split = record["split"]
-        metadata = record["metadata"]
+        metadata = json.loads(record["metadata"])
         counters["labels"][(split, record["messages"][-1]["content"])] += 1
         if metadata["component_splits"] != [split, split]:
             counters["bad_split"][split] += 1
