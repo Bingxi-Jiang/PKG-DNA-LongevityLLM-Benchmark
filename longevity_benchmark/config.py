@@ -40,6 +40,12 @@ class BuildConfig:
             "MP:0003786",  # premature aging
         }
     )
+    inconclusive_terms: frozenset[str] = frozenset(
+        {
+            "MP:0010768",  # mortality/aging
+            "MP:0010769",  # abnormal survival
+        }
+    )
     system_prompt: str = (
         "You are an expert in mouse genetics and aging biology. "
         "Answer concisely with exactly one of the provided options."

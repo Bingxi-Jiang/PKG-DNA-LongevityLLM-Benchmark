@@ -83,3 +83,30 @@ def balance_decreased_within_split(df: pd.DataFrame, config: BuildConfig) -> pd.
         print(f"{split}: {split_df['label'].value_counts().to_dict()}")
 
     return out
+
+
+def balance_ternary_within_split(df: pd.DataFrame, config: BuildConfig) -> pd.DataFrame:
+    """Balance Increased/Decreased/Inconclusive labels inside each split."""
+    labels = ["Increased", "Decreased", "Inconclusive"]
+    kept = []
+    for split, split_df in df.groupby("split"):
+        counts = split_df["label"].value_counts()
+        missing = [label for label in labels if counts.get(label, 0) == 0]
+        if missing:
+            raise ValueError(f"Cannot build ternary split {split}; missing labels: {missing}")
+
+        target = min(counts[label] for label in labels)
+        split_parts = []
+        for label in labels:
+            label_df = split_df[split_df["label"] == label]
+            split_parts.append(label_df.sample(n=target, random_state=config.seed))
+        kept.append(pd.concat(split_parts, ignore_index=True))
+
+    out = pd.concat(kept, ignore_index=True)
+    out = out.sample(frac=1.0, random_state=config.seed).reset_index(drop=True)
+
+    print("\nTernary rows after balancing:")
+    for split, split_df in out.groupby("split"):
+        print(f"{split}: {split_df['label'].value_counts().to_dict()}")
+
+    return out

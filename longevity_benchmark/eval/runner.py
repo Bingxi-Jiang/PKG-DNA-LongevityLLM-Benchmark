@@ -21,8 +21,10 @@ WORKERS = 6  # Stay <= 8 per hackathon guidance.
 
 TASK_FILE_PREFIX = {
     "effect": "mgi_effect",
+    "mcq": "mgi_mcq",
+    "ternary": "mgi_ternary",
+    "set": "mgi_set",
     "pairwise": "mgi_pairwise",
-    "ternary": "mgi_ternary",  # Legacy support for older generated files.
 }
 
 
@@ -117,6 +119,25 @@ def run_eval(rows: list[dict], client, enable_thinking: bool, log_path: str | Pa
     return results
 
 
+def parse_set_value(value: str) -> set[str]:
+    if not value:
+        return set()
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
+def set_f1(gold: set[str], pred: set[str]) -> float:
+    if not gold and not pred:
+        return 1.0
+    if not gold or not pred:
+        return 0.0
+    overlap = len(gold & pred)
+    precision = overlap / len(pred)
+    recall = overlap / len(gold)
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
 def report_metrics(results: list[dict], task: str) -> tuple[float, str, float]:
     """Print per-class breakdown and return score, metric name, baseline."""
     preds = [result["pred"] for result in results]
@@ -125,12 +146,27 @@ def report_metrics(results: list[dict], task: str) -> tuple[float, str, float]:
     print(f"\n{'=' * 50}")
     print(f"Task: {task}  |  n={len(results)}")
 
-    if task == "pairwise":
+    if task in {"pairwise", "mcq"}:
         score = accuracy_score(golds, preds)
         metric = "accuracy"
         baseline = 0.5
+        if task == "mcq":
+            baseline = 0.25
         print(f"Accuracy        : {score:.3f}")
         print(f"Random baseline : {baseline:.3f}")
+        print(f"Pred dist       : {dict(Counter(preds))}")
+    elif task == "set":
+        row_scores = [
+            set_f1(parse_set_value(gold), parse_set_value(pred))
+            for gold, pred in zip(golds, preds)
+        ]
+        score = sum(row_scores) / len(row_scores) if row_scores else 0.0
+        metric = "mean_set_f1"
+        baseline = 0.0
+        exact = sum(gold == pred for gold, pred in zip(golds, preds))
+        print(f"Mean set F1     : {score:.3f}")
+        exact_rate = exact / len(results) if results else 0.0
+        print(f"Exact match     : {exact}/{len(results)} = {exact_rate:.2f}")
         print(f"Pred dist       : {dict(Counter(preds))}")
     else:
         score = balanced_accuracy_score(golds, preds)

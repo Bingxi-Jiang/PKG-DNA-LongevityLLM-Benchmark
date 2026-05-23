@@ -11,6 +11,27 @@ from .config import BuildConfig
 from .prompts import describe_allele, metadata_for_row
 
 
+MCQ_OPTIONS = [
+    ("A", "Increased lifespan"),
+    ("B", "Decreased lifespan"),
+    ("C", "Lifespan-related annotation is non-directional or conflicting"),
+    ("D", "No curated lifespan-related annotation"),
+]
+
+MCQ_ANSWER_BY_LABEL = {
+    "Increased": "A",
+    "Decreased": "B",
+    "Inconclusive": "C",
+}
+
+STRICT_DIRECTIONAL_MP_OPTIONS = [
+    ("MP:0001661", "extended life span"),
+    ("MP:0011614", "slow aging"),
+    ("MP:0002083", "premature death"),
+    ("MP:0003786", "premature aging"),
+]
+
+
 def make_effect_records(
     df: pd.DataFrame,
     context_index: dict[tuple[str, str], list[str]],
@@ -42,6 +63,139 @@ def make_effect_records(
                     {"role": "system", "content": config.system_prompt},
                     {"role": "user", "content": user},
                     {"role": "assistant", "content": row["label"]},
+                ],
+            }
+        )
+    return records
+
+
+def make_mcq_records(
+    df: pd.DataFrame,
+    context_index: dict[tuple[str, str], list[str]],
+    config: BuildConfig,
+) -> list[dict]:
+    records = []
+    option_block = "\n".join(f"{letter}. {text}" for letter, text in MCQ_OPTIONS)
+    for row in df.to_dict("records"):
+        desc = describe_allele(row, context_index)
+        user = (
+            "A researcher has engineered a mouse with the following genetic "
+            "modification:\n\n"
+            f"{desc}\n\n"
+            "Which option best describes the curated MGI lifespan effect for "
+            "this modification?\n\n"
+            f"{option_block}\n\n"
+            "Answer with exactly one letter: A / B / C / D"
+        )
+        records.append(
+            {
+                "lb_id": "LB-MGI-003",
+                "display_name": "MGI Mouse Longevity / Multiple Choice Effect",
+                "domain": "genetics",
+                "format": "mcq",
+                "metric": "accuracy",
+                "units": None,
+                "task": config.task_description,
+                "split": row["split"],
+                "metadata": {
+                    **metadata_for_row(row),
+                    "options": {letter: text for letter, text in MCQ_OPTIONS},
+                    "gold_label": row["label"],
+                },
+                "messages": [
+                    {"role": "system", "content": config.system_prompt},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": MCQ_ANSWER_BY_LABEL[row["label"]]},
+                ],
+            }
+        )
+    return records
+
+
+def make_ternary_records(
+    df: pd.DataFrame,
+    context_index: dict[tuple[str, str], list[str]],
+    config: BuildConfig,
+) -> list[dict]:
+    records = []
+    for row in df.to_dict("records"):
+        desc = describe_allele(row, context_index)
+        user = (
+            "A researcher has engineered a mouse with the following genetic "
+            "modification:\n\n"
+            f"{desc}\n\n"
+            "Based on curated MGI lifespan or aging phenotype evidence, choose "
+            "the best label:\n\n"
+            "Increased = strict directional evidence for longer lifespan or slower aging\n"
+            "Decreased = strict directional evidence for shorter lifespan or premature aging\n"
+            "Inconclusive = lifespan-related evidence is broad, non-directional, or conflicting\n\n"
+            "Answer with exactly one phrase: Increased / Decreased / Inconclusive"
+        )
+        records.append(
+            {
+                "lb_id": "LB-MGI-004",
+                "display_name": "MGI Mouse Longevity / Ternary Inconclusive",
+                "domain": "genetics",
+                "format": "ternary",
+                "metric": "balanced_accuracy",
+                "units": None,
+                "task": config.task_description,
+                "split": row["split"],
+                "metadata": metadata_for_row(row),
+                "messages": [
+                    {"role": "system", "content": config.system_prompt},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": row["label"]},
+                ],
+            }
+        )
+    return records
+
+
+def make_set_generation_records(
+    df: pd.DataFrame,
+    context_index: dict[tuple[str, str], list[str]],
+    config: BuildConfig,
+) -> list[dict]:
+    records = []
+    candidate_block = "\n".join(
+        f"{mp_id} - {mp_name}" for mp_id, mp_name in STRICT_DIRECTIONAL_MP_OPTIONS
+    )
+    for row in df.to_dict("records"):
+        desc = describe_allele(row, context_index)
+        gold_terms = ",".join(sorted(row["gold_mp_terms"]))
+        user = (
+            "A researcher has engineered a mouse with the following genetic "
+            "modification:\n\n"
+            f"{desc}\n\n"
+            "Candidate strict directional Mammalian Phenotype terms:\n"
+            f"{candidate_block}\n\n"
+            "Which candidate MP terms are curated for this genotype? Select all "
+            "that apply.\n\n"
+            "Answer with MP IDs only, comma-separated. If no candidate applies, "
+            "answer None."
+        )
+        records.append(
+            {
+                "lb_id": "LB-MGI-005",
+                "display_name": "MGI Mouse Longevity / Directional MP Term Set",
+                "domain": "genetics",
+                "format": "set_generation",
+                "metric": "set_f1",
+                "units": None,
+                "task": config.task_description,
+                "split": row["split"],
+                "metadata": {
+                    **metadata_for_row(row),
+                    "candidate_mp_terms": [
+                        {"mp_id": mp_id, "mp_name": mp_name}
+                        for mp_id, mp_name in STRICT_DIRECTIONAL_MP_OPTIONS
+                    ],
+                },
+                "messages": [
+                    {"role": "system", "content": config.system_prompt},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": gold_terms},
                 ],
             }
         )

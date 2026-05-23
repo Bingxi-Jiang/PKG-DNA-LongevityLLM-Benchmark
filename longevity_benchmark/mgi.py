@@ -162,3 +162,83 @@ def build_directional_rows(
     print(f"Directional rows before balancing: {len(df)}")
     print(df["label"].value_counts().to_string())
     return df.reset_index(drop=True)
+
+
+def build_inconclusive_rows(
+    pheno: pd.DataFrame,
+    allele: pd.DataFrame,
+    mp_name_by_id: dict[str, str],
+    config: BuildConfig,
+) -> pd.DataFrame:
+    """Build rows with lifespan evidence that is not a single strict direction."""
+    single = pheno[~pheno["allele_symbol"].str.contains(r"\|", na=False)].copy()
+
+    grouped = (
+        single.groupby(["allele_symbol", "genetic_bg"], dropna=False)
+        .agg(
+            all_mp_terms=("mp_term", lambda x: sorted({str(v) for v in x if pd.notna(v)})),
+            mgi_allele_ids=(
+                "allele_id",
+                lambda x: sorted({str(v) for v in x if pd.notna(v) and str(v)}),
+            ),
+            gold_pubmed_ids=(
+                "pubmed_id",
+                lambda x: sorted({str(v) for v in x if pd.notna(v) and str(v)}),
+            ),
+        )
+        .reset_index()
+    )
+
+    def reason_for_terms(terms: list[str]) -> str | None:
+        strict_labels = {
+            config.label_by_term[term] for term in terms if term in config.directional_terms
+        }
+        if len(strict_labels) > 1:
+            return "conflicting_directional_terms"
+        if not strict_labels and set(terms) & config.inconclusive_terms:
+            return "broad_non_directional_survival_term"
+        return None
+
+    grouped["inconclusive_reason"] = grouped["all_mp_terms"].apply(reason_for_terms)
+    grouped = grouped.dropna(subset=["inconclusive_reason"]).copy()
+    grouped["label"] = "Inconclusive"
+    grouped["label_source"] = grouped["inconclusive_reason"].apply(
+        lambda reason: f"mgi_{reason}"
+    )
+    grouped["gold_mp_terms"] = grouped["all_mp_terms"].apply(
+        lambda terms: [
+            term
+            for term in terms
+            if term in config.directional_terms or term in config.inconclusive_terms
+        ]
+    )
+
+    allele_meta = allele[
+        [
+            "allele_symbol_meta",
+            "allele_name",
+            "allele_type",
+            "inheritance",
+            "marker_symbol",
+            "marker_name",
+        ]
+    ].copy()
+    allele_meta = allele_meta.drop_duplicates(subset=["allele_symbol_meta"])
+
+    df = grouped.merge(
+        allele_meta,
+        left_on="allele_symbol",
+        right_on="allele_symbol_meta",
+        how="left",
+    )
+    df = df.dropna(subset=["marker_symbol"]).copy()
+    df = df.drop_duplicates(subset=["allele_symbol", "genetic_bg", "label"])
+    df["gold_mp_names"] = df["gold_mp_terms"].apply(
+        lambda terms: [mp_name_by_id.get(term, term) for term in terms]
+    )
+    df = df.drop(columns=["all_mp_terms"])
+
+    print(f"\nInconclusive rows before balancing: {len(df)}")
+    if not df.empty:
+        print(df["inconclusive_reason"].value_counts().to_string())
+    return df.reset_index(drop=True)

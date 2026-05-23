@@ -10,13 +10,15 @@ This was built for Track 01 of the LongevityLLM Hackathon.
 
 Most aging benchmarks are human-centric. This benchmark asks a model to reason
 about murine genetics: given an allele, inheritance mode, genetic background,
-and non-lifespan phenotype profile, predict whether the mutation increases or
-decreases lifespan relative to wild-type controls.
+and non-lifespan phenotype profile, identify MGI-curated lifespan effects in
+several task formats.
 
-The current benchmark intentionally avoids a "Not changed" label. In MGI,
-absence of a lifespan phenotype annotation is not verifiable evidence that
-lifespan was unchanged; it may simply mean the phenotype was not tested or not
-curated. Keeping only directional MGI terms gives a cleaner ground truth.
+The benchmark intentionally avoids a "Not changed" label. In MGI, absence of a
+lifespan phenotype annotation is not verifiable evidence that lifespan was
+unchanged; it may simply mean the phenotype was not tested or not curated. The
+ternary task therefore uses "Inconclusive" for broad, non-directional, or
+conflicting lifespan-related annotations rather than treating missing evidence
+as no effect.
 
 ## Ground Truth
 
@@ -28,7 +30,8 @@ Labels are derived from strict directional Mammalian Phenotype (MP) terms:
 | Decreased | `MP:0002083` premature death; `MP:0003786` premature aging |
 
 Broader or non-directional terms such as `MP:0010768` mortality/aging and
-`MP:0010769` abnormal survival are excluded from labels.
+`MP:0010769` abnormal survival are excluded from strict directional labels.
+They are used only for the ternary task's `Inconclusive` class.
 
 Each output row includes provenance in `metadata`: allele, gene, genetic
 background, gold MP terms/names, PubMed IDs, and label source.
@@ -68,6 +71,58 @@ live longer.
 Pairwise examples are sampled only within the same split, so a test pair never
 contains a training component.
 
+### LB-MGI-003: Multiple Choice Effect
+
+Choose the curated MGI lifespan-effect option from four choices.
+
+| Property | Value |
+| --- | --- |
+| Format | Multiple choice question (MCQ) |
+| Metric | Accuracy |
+| Train | 99 prompts |
+| Test | 99 prompts |
+| Train answers | 88 B, 11 A |
+| Test answers | 88 B, 11 A |
+
+Options are fixed as: A increased lifespan, B decreased lifespan, C
+non-directional/conflicting lifespan evidence, and D no curated
+lifespan-related annotation. The current MCQ records are generated from the
+strict directional rows, so gold answers are A or B.
+
+### LB-MGI-004: Ternary Inconclusive
+
+Predict whether MGI evidence supports increased lifespan, decreased lifespan,
+or an inconclusive lifespan-related annotation.
+
+| Property | Value |
+| --- | --- |
+| Format | Ternary classification |
+| Metric | Balanced accuracy |
+| Train | 33 prompts |
+| Test | 33 prompts |
+| Train labels | 11 Increased, 11 Decreased, 11 Inconclusive |
+| Test labels | 11 Increased, 11 Decreased, 11 Inconclusive |
+
+Inconclusive rows come only from MGI annotations that are explicitly
+lifespan/aging-related but not a single strict direction: broad terms such as
+`MP:0010768` mortality/aging and `MP:0010769` abnormal survival, plus genotype
+rows with conflicting strict directional labels.
+
+### LB-MGI-005: Directional MP Term Set
+
+Generate the set of strict directional MP terms curated for the genotype.
+
+| Property | Value |
+| --- | --- |
+| Format | Set generation |
+| Metric | Mean set F1 |
+| Train | 99 prompts |
+| Test | 99 prompts |
+| Candidate terms | 4 strict directional MP terms |
+
+The gold answer is a comma-separated set of MP IDs, e.g. `MP:0002083` or
+`MP:0002083,MP:0003786`.
+
 ## Leakage Controls
 
 - Gene-level split: no `marker_symbol` appears in both train and test for the
@@ -86,9 +141,10 @@ Latest sanity checks after regeneration:
 
 ```text
 effect gene overlap: 0
-leaky context hits: 0 / 998 prompts
+leaky context hits: 0 / 1460 prompts
 pairwise train bad_split: 0, labels: A=250, B=250
 pairwise test bad_split: 0, labels: A=150, B=150
+ternary train/test labels: 11 Increased, 11 Decreased, 11 Inconclusive
 ```
 
 ## Data Sources
@@ -168,6 +224,12 @@ Generated files:
 ```text
 output/mgi_effect_train.jsonl
 output/mgi_effect_test.jsonl
+output/mgi_mcq_train.jsonl
+output/mgi_mcq_test.jsonl
+output/mgi_ternary_train.jsonl
+output/mgi_ternary_test.jsonl
+output/mgi_set_train.jsonl
+output/mgi_set_test.jsonl
 output/mgi_pairwise_train.jsonl
 output/mgi_pairwise_test.jsonl
 ```
@@ -179,10 +241,16 @@ set HF_TOKEN=<your-token>
 python evaluate.py --task both --split test
 ```
 
+`--task both` runs the original effect and pairwise tasks. Use `--task all` to
+run effect, MCQ, ternary, set-generation, and pairwise tasks.
+
 Useful options:
 
 ```bash
 python evaluate.py --task effect --limit 10
+python evaluate.py --task mcq --limit 10
+python evaluate.py --task ternary --limit 10
+python evaluate.py --task set --limit 10
 python evaluate.py --task pairwise --think
 python evaluate.py --endpoint https://<endpoint>/v1
 python evaluate.py --input-dir output --eval-dir output/eval
@@ -191,6 +259,9 @@ python evaluate.py --input-dir output --eval-dir output/eval
 ## Scoring
 
 - Effect task: balanced accuracy, with random baseline 0.5.
+- MCQ task: accuracy, with random baseline 0.25.
+- Ternary task: balanced accuracy, with random baseline 0.333.
+- Set-generation task: mean per-row set F1.
 - Pairwise task: accuracy, with random baseline 0.5.
 
 The evaluator strips model thinking traces before parsing final answers.
@@ -223,12 +294,18 @@ The evaluator strips model thinking traces before parsing final answers.
 `-- output/
     |-- mgi_effect_train.jsonl
     |-- mgi_effect_test.jsonl
+    |-- mgi_mcq_train.jsonl
+    |-- mgi_mcq_test.jsonl
+    |-- mgi_ternary_train.jsonl
+    |-- mgi_ternary_test.jsonl
+    |-- mgi_set_train.jsonl
+    |-- mgi_set_test.jsonl
     |-- mgi_pairwise_train.jsonl
     `-- mgi_pairwise_test.jsonl
 ```
 
-Legacy `mgi_ternary_*` files may exist in local output directories from older
-builds, but they are not part of the current recommended benchmark.
+The current `mgi_ternary_*` files use an `Inconclusive` label, not a
+`Not changed` label.
 
 ## Extending
 
@@ -242,7 +319,7 @@ pipeline:
 3. Register the new record list in `longevity_benchmark/build.py` and save it
    with `save_split_records`.
 4. Add an output parser or metric branch under `longevity_benchmark/eval/` if
-   the answer format differs from binary or pairwise.
+   the answer format is not already registered.
 
 The intended shape is: data extraction -> split/balance -> task record builder
 -> JSONL writer -> evaluator parser/metric.

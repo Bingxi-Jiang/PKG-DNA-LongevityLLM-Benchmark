@@ -8,9 +8,16 @@ from pathlib import Path
 from .runner import DEFAULT_ENDPOINT, evaluate_task, make_client
 
 
+ALL_TASKS = ["effect", "mcq", "ternary", "set", "pairwise"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task", choices=["effect", "pairwise", "ternary", "both"], default="both")
+    parser.add_argument(
+        "--task",
+        choices=["effect", "mcq", "ternary", "set", "pairwise", "both", "all"],
+        default="both",
+    )
     parser.add_argument("--split", choices=["train", "test"], default="test")
     parser.add_argument("--think", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
@@ -21,7 +28,12 @@ def main() -> None:
 
     client = make_client(args.endpoint)
     Path(args.eval_dir).mkdir(parents=True, exist_ok=True)
-    tasks = ["effect", "pairwise"] if args.task == "both" else [args.task]
+    if args.task == "all":
+        tasks = ALL_TASKS
+    elif args.task == "both":
+        tasks = ["effect", "pairwise"]
+    else:
+        tasks = [args.task]
 
     for task in tasks:
         evaluate_task(

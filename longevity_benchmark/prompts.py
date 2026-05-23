@@ -46,14 +46,21 @@ def describe_allele(
 
 def metadata_for_row(row: dict | pd.Series) -> dict:
     row = row if isinstance(row, dict) else row.to_dict()
-    return {
+    label_source = row.get("label_source", "mgi_strict_directional_mp_term")
+    if pd.isna(label_source):
+        label_source = "mgi_strict_directional_mp_term"
+    metadata = {
         "mgi_allele_ids": list(row["mgi_allele_ids"]),
         "allele": str(row["allele_symbol"]),
         "gene": str(row["marker_symbol"]),
         "allele_type": str(row["allele_type"]),
         "genetic_background": str(row["genetic_bg"]),
-        "label_source": "mgi_strict_directional_mp_term",
+        "label_source": label_source,
         "gold_mp_terms": list(row["gold_mp_terms"]),
         "gold_mp_names": list(row["gold_mp_names"]),
         "gold_pubmed_ids": list(row["gold_pubmed_ids"]),
     }
+    inconclusive_reason = row.get("inconclusive_reason")
+    if inconclusive_reason and pd.notna(inconclusive_reason):
+        metadata["inconclusive_reason"] = str(inconclusive_reason)
+    return metadata
