@@ -110,18 +110,15 @@ def run_eval(rows: list[dict], client, enable_thinking: bool, log_path: str | Pa
                     results.append(result)
                     log_file.write(json.dumps(result, ensure_ascii=False) + "\n")
                     log_file.flush()
-                    mark = "OK" if result["correct"] else "NO"
-                    print(
-                        f"  [{done}/{len(rows)}] {mark}"
-                        f"  pred={result['pred']!r:12s}"
-                        f"  gold={result['gold']!r}"
-                        f"  ({result['elapsed_s']}s)"
-                    )
                 except Exception as exc:  # noqa: BLE001
                     n_errors += 1
                     print(f"  [{done}/{len(rows)}] ERROR: {exc}")
+                    continue
+                correct = sum(r["correct"] for r in results)
+                acc = correct / len(results)
+                print(f"  [{done}/{len(rows)}]  acc={acc:.1%}  correct={correct}/{len(results)}  api_errors={n_errors}", end="\r", flush=True)
 
-    print(f"\n  Errors: {n_errors}/{len(rows)}")
+    print()
     return results
 
 
