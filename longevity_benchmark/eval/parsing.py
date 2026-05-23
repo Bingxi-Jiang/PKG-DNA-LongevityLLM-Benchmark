@@ -85,6 +85,36 @@ def parse_set_generation(text: str) -> str:
     return ",".join(sorted(set(matches))) if matches else text.strip()
 
 
+def parse_regression(text: str) -> str:
+    """Extract a numeric prediction."""
+    matches = re.findall(r"-?\d+(?:\.\d+)?", text.replace(",", ""))
+    if not matches:
+        return text.strip()
+    value = float(matches[-1])
+    return str(int(value)) if value.is_integer() else f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def parse_sex_effect(text: str) -> str:
+    """Extract Female longer / Male longer / No significant difference."""
+    low = text.lower()
+    no_effect_hits = [
+        "no significant",
+        "not significant",
+        "no detectable",
+        "no difference",
+        "neither",
+        "none",
+    ]
+    if any(hit in low for hit in no_effect_hits):
+        return "No significant difference"
+
+    matches = re.findall(r"\b(female|females|male|males)\b", low)
+    if matches:
+        final = matches[-1]
+        return "Female longer" if final.startswith("female") else "Male longer"
+    return text.strip()
+
+
 PARSERS = {
     "binary": parse_effect,
     "effect": parse_effect,
@@ -93,4 +123,6 @@ PARSERS = {
     "mcq": parse_mcq,
     "set_generation": parse_set_generation,
     "set": parse_set_generation,
+    "regression": parse_regression,
+    "sex_effect": parse_sex_effect,
 }

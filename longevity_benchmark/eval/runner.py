@@ -25,6 +25,8 @@ TASK_FILE_PREFIX = {
     "ternary": "mgi_ternary",
     "set": "mgi_set",
     "pairwise": "mgi_pairwise",
+    "regression": "mpd_lifespan_regression",
+    "sex_effect": "mpd_sex_effect",
 }
 
 
@@ -52,9 +54,10 @@ def call_model(row: dict, client, enable_thinking: bool) -> dict:
     messages = row["messages"][:-1]
     gold = row["messages"][-1]["content"].strip()
     fmt = row["format"]
-    parser = PARSERS.get(fmt)
+    parser_key = row.get("parser", fmt)
+    parser = PARSERS.get(parser_key)
     if parser is None:
-        raise ValueError(f"No parser registered for format: {fmt}")
+        raise ValueError(f"No parser registered for format/parser: {fmt}/{parser_key}")
 
     start = time.time()
     response = client.chat.completions.create(
@@ -138,6 +141,13 @@ def set_f1(gold: set[str], pred: set[str]) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+def parse_float(value: str) -> float | None:
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def report_metrics(results: list[dict], task: str) -> tuple[float, str, float]:
     """Print per-class breakdown and return score, metric name, baseline."""
     preds = [result["pred"] for result in results]
@@ -168,6 +178,21 @@ def report_metrics(results: list[dict], task: str) -> tuple[float, str, float]:
         exact_rate = exact / len(results) if results else 0.0
         print(f"Exact match     : {exact}/{len(results)} = {exact_rate:.2f}")
         print(f"Pred dist       : {dict(Counter(preds))}")
+    elif task == "regression":
+        pairs = [
+            (parse_float(gold), parse_float(pred))
+            for gold, pred in zip(golds, preds)
+        ]
+        valid_pairs = [(gold, pred) for gold, pred in pairs if gold is not None and pred is not None]
+        errors = [abs(gold - pred) for gold, pred in valid_pairs]
+        squared_errors = [(gold - pred) ** 2 for gold, pred in valid_pairs]
+        score = sum(errors) / len(errors) if errors else float("nan")
+        rmse = (sum(squared_errors) / len(squared_errors)) ** 0.5 if squared_errors else float("nan")
+        metric = "mae_days"
+        baseline = 0.0
+        print(f"MAE days        : {score:.2f}")
+        print(f"RMSE days       : {rmse:.2f}")
+        print(f"Invalid preds   : {len(results) - len(valid_pairs)}/{len(results)}")
     else:
         score = balanced_accuracy_score(golds, preds)
         metric = "balanced_accuracy"

@@ -16,10 +16,20 @@ class MGIPaths:
 
 
 @dataclass(frozen=True)
+class MPDPaths:
+    """Input paths for the MPD Yuan2 lifespan data files."""
+
+    yuan2_strainmeans: str = "data/mpd/Yuan2_strainmeans.csv"
+    yuan2_animals: str = "data/mpd/Yuan2_animal_lifespandays.csv"
+    yuan2_measureinfo: str = "data/mpd/Yuan2_measureinfo.json"
+
+
+@dataclass(frozen=True)
 class BuildConfig:
     """Parameters that control benchmark construction."""
 
     paths: MGIPaths = field(default_factory=MGIPaths)
+    mpd_paths: MPDPaths = field(default_factory=MPDPaths)
     output_dir: str = "output"
     seed: int = 42
     negative_to_positive_ratio: int = 8

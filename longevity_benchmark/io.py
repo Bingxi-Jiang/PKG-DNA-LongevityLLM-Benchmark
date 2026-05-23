@@ -31,4 +31,8 @@ def save_split_records(records: list[dict], output_dir: str, stem: str) -> None:
         write_jsonl(path, split_records)
 
         labels = Counter(record["messages"][-1]["content"] for record in split_records)
-        print(f"  {path} - {len(split_records)} rows, labels: {dict(labels)}")
+        if len(labels) > 12:
+            label_summary = f"{len(labels)} unique answers"
+        else:
+            label_summary = f"labels: {dict(labels)}"
+        print(f"  {path} - {len(split_records)} rows, {label_summary}")

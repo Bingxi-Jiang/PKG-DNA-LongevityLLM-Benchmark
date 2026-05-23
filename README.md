@@ -1,17 +1,17 @@
-# MGI Mouse Longevity Benchmark
+# Mouse Longevity Benchmark
 
-A benchmark for evaluating whether LLMs can infer the directional effect of
-mouse genetic mutations on lifespan from Mouse Genome Informatics (MGI)
-phenotype annotations.
+A benchmark for evaluating whether LLMs can reason about murine longevity from
+Mouse Genome Informatics (MGI) phenotype annotations and Mouse Phenome Database
+(MPD) lifespan measurements.
 
 This was built for Track 01 of the LongevityLLM Hackathon.
 
 ## Overview
 
 Most aging benchmarks are human-centric. This benchmark asks a model to reason
-about murine genetics: given an allele, inheritance mode, genetic background,
-and non-lifespan phenotype profile, identify MGI-curated lifespan effects in
-several task formats.
+about murine genetics and strain biology: given an allele, inheritance mode,
+genetic background, non-lifespan phenotype profile, strain, or sex, identify
+curated lifespan effects or predict measured lifespan.
 
 The benchmark intentionally avoids a "Not changed" label. In MGI, absence of a
 lifespan phenotype annotation is not verifiable evidence that lifespan was
@@ -35,6 +35,12 @@ They are used only for the ternary task's `Inconclusive` class.
 
 Each output row includes provenance in `metadata`: allele, gene, genetic
 background, gold MP terms/names, PubMed IDs, and label source.
+
+MPD-derived tasks use Yuan2, an inbred-strain lifespan and survival-curve study
+in the Mouse Phenome Database. Regression labels come from measure `23201`
+median lifespan in days. Sex-effect labels are computed from animal-level
+measure `23401` lifespan values using a two-sided Mann-Whitney U test at
+alpha = 0.05.
 
 ## Tasks
 
@@ -123,6 +129,39 @@ Generate the set of strict directional MP terms curated for the genotype.
 The gold answer is a comma-separated set of MP IDs, e.g. `MP:0002083` or
 `MP:0002083,MP:0003786`.
 
+### LB-MPD-006: Strain Lifespan Regression
+
+Predict the median lifespan in days for a strain-sex group from MPD Yuan2.
+
+| Property | Value |
+| --- | --- |
+| Format | Regression |
+| Metric | MAE days |
+| Train | 41 prompts |
+| Test | 18 prompts |
+| Units | Days |
+
+Rows are split by strain so the same inbred strain does not appear in both
+train and test.
+
+### LB-MPD-007: Sex Effect With No Significant Difference
+
+Predict whether females, males, or neither sex had significantly longer
+lifespan for a Yuan2 inbred strain.
+
+| Property | Value |
+| --- | --- |
+| Format | Ternary classification |
+| Metric | Balanced accuracy |
+| Train | 19 prompts |
+| Test | 9 prompts |
+| Test labels | 7 No significant difference, 1 Female longer, 1 Male longer |
+
+This task is the strict no-effect-style addition: the "No significant
+difference" class comes from tested animal-level lifespan data, not from absent
+curation. Because only one strain has a female-longer result at alpha = 0.05,
+that row is placed in the test split.
+
 ## Leakage Controls
 
 - Gene-level split: no `marker_symbol` appears in both train and test for the
@@ -136,15 +175,20 @@ The gold answer is a comma-separated set of MP IDs, e.g. `MP:0002083` or
   directional labels are dropped.
 - Retrieval resistance: prompts are constructed from MGI bulk tables, not from
   PubMed abstracts or natural-language paper summaries.
+- MPD regression split: no Yuan2 strain appears in both train and test.
+- MPD sex-effect labels are computed from animal-level lifespan values and
+  keep measured medians and p-values in metadata only, not in prompts.
 
 Latest sanity checks after regeneration:
 
 ```text
 effect gene overlap: 0
-leaky context hits: 0 / 1460 prompts
+leaky context hits: 0 / 1547 prompts
 pairwise train bad_split: 0, labels: A=250, B=250
 pairwise test bad_split: 0, labels: A=150, B=150
 ternary train/test labels: 11 Increased, 11 Decreased, 11 Inconclusive
+MPD regression train/test: 41 / 18
+MPD sex-effect test labels: 7 No significant difference, 1 Female longer, 1 Male longer
 ```
 
 ## Data Sources
@@ -164,6 +208,23 @@ mkdir -p data/mgi
 curl https://www.informatics.jax.org/downloads/reports/MGI_PhenoGenoMP.rpt -o data/mgi/MGI_PhenoGenoMP.rpt
 curl https://www.informatics.jax.org/downloads/reports/MGI_PhenotypicAllele.rpt -o data/mgi/MGI_PhenotypicAllele.rpt
 curl https://www.informatics.jax.org/downloads/reports/VOC_MammalianPhenotype.rpt -o data/mgi/VOC_MammalianPhenotype.rpt
+```
+
+The MPD-derived tasks expect three Yuan2 files:
+
+| File | Description |
+| --- | --- |
+| `Yuan2_strainmeans.csv` | Strain-sex median lifespan and summary values |
+| `Yuan2_animal_lifespandays.csv` | Animal-level lifespan in days |
+| `Yuan2_measureinfo.json` | MPD Yuan2 measure metadata |
+
+To download fresh copies:
+
+```bash
+mkdir -p data/mpd
+curl "https://phenome.jax.org/api/pheno/strainmeans/Yuan2?csv=yes" -o data/mpd/Yuan2_strainmeans.csv
+curl "https://phenome.jax.org/api/pheno/animalvals/23401?csv=yes" -o data/mpd/Yuan2_animal_lifespandays.csv
+curl "https://phenome.jax.org/api/pheno/measureinfo/Yuan2" -o data/mpd/Yuan2_measureinfo.json
 ```
 
 ## Prompt Format
@@ -232,6 +293,10 @@ output/mgi_set_train.jsonl
 output/mgi_set_test.jsonl
 output/mgi_pairwise_train.jsonl
 output/mgi_pairwise_test.jsonl
+output/mpd_lifespan_regression_train.jsonl
+output/mpd_lifespan_regression_test.jsonl
+output/mpd_sex_effect_train.jsonl
+output/mpd_sex_effect_test.jsonl
 ```
 
 Run evaluation against the hosted Longevity-LLM endpoint:
@@ -242,7 +307,8 @@ python evaluate.py --task both --split test
 ```
 
 `--task both` runs the original effect and pairwise tasks. Use `--task all` to
-run effect, MCQ, ternary, set-generation, and pairwise tasks.
+run effect, MCQ, ternary, set-generation, pairwise, regression, and sex-effect
+tasks.
 
 Useful options:
 
@@ -252,6 +318,8 @@ python evaluate.py --task mcq --limit 10
 python evaluate.py --task ternary --limit 10
 python evaluate.py --task set --limit 10
 python evaluate.py --task pairwise --think
+python evaluate.py --task regression --limit 10
+python evaluate.py --task sex_effect --limit 10
 python evaluate.py --endpoint https://<endpoint>/v1
 python evaluate.py --input-dir output --eval-dir output/eval
 ```
@@ -263,6 +331,9 @@ python evaluate.py --input-dir output --eval-dir output/eval
 - Ternary task: balanced accuracy, with random baseline 0.333.
 - Set-generation task: mean per-row set F1.
 - Pairwise task: accuracy, with random baseline 0.5.
+- Regression task: mean absolute error and RMSE in days.
+- Sex-effect task: balanced accuracy over Female longer, Male longer, and No
+  significant difference.
 
 The evaluator strips model thinking traces before parsing final answers.
 
@@ -278,19 +349,24 @@ The evaluator strips model thinking traces before parsing final answers.
 |   |-- config.py             # label policy, paths, sampling parameters
 |   |-- io.py                 # JSONL read/write helpers
 |   |-- mgi.py                # MGI table loading and label extraction
+|   |-- mpd.py                # MPD Yuan2 loading and derived labels
 |   |-- prompts.py            # allele descriptions and metadata
 |   |-- splits.py             # leakage-aware split and balancing
-|   |-- tasks.py              # effect and pairwise task builders
+|   |-- tasks.py              # task record builders
 |   |-- validation.py         # generated-record sanity checks
 |   `-- eval/
 |       |-- cli.py            # evaluation CLI
 |       |-- parsing.py        # model-output parsers
 |       `-- runner.py         # endpoint calls, logging, metrics
 |-- data/
-|   `-- mgi/
-|       |-- MGI_PhenoGenoMP.rpt
-|       |-- MGI_PhenotypicAllele.rpt
-|       `-- VOC_MammalianPhenotype.rpt
+|   |-- mgi/
+|   |   |-- MGI_PhenoGenoMP.rpt
+|   |   |-- MGI_PhenotypicAllele.rpt
+|   |   `-- VOC_MammalianPhenotype.rpt
+|   `-- mpd/
+|       |-- Yuan2_strainmeans.csv
+|       |-- Yuan2_animal_lifespandays.csv
+|       `-- Yuan2_measureinfo.json
 `-- output/
     |-- mgi_effect_train.jsonl
     |-- mgi_effect_test.jsonl
@@ -301,7 +377,11 @@ The evaluator strips model thinking traces before parsing final answers.
     |-- mgi_set_train.jsonl
     |-- mgi_set_test.jsonl
     |-- mgi_pairwise_train.jsonl
-    `-- mgi_pairwise_test.jsonl
+    |-- mgi_pairwise_test.jsonl
+    |-- mpd_lifespan_regression_train.jsonl
+    |-- mpd_lifespan_regression_test.jsonl
+    |-- mpd_sex_effect_train.jsonl
+    `-- mpd_sex_effect_test.jsonl
 ```
 
 The current `mgi_ternary_*` files use an `Inconclusive` label, not a

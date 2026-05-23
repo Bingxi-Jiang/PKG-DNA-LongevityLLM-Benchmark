@@ -9,13 +9,19 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import BuildConfig, MGIPaths
+from .config import BuildConfig, MGIPaths, MPDPaths
 from .io import save_split_records
 from .mgi import (
     build_context_index,
     build_directional_rows,
     build_inconclusive_rows,
     load_mgi_tables,
+)
+from .mpd import (
+    assign_strain_splits,
+    build_yuan2_sex_effect_rows,
+    load_yuan2_animals,
+    load_yuan2_strainmeans,
 )
 from .splits import (
     assign_gene_splits,
@@ -24,6 +30,8 @@ from .splits import (
 )
 from .tasks import (
     make_effect_records,
+    make_mpd_lifespan_regression_records,
+    make_mpd_sex_effect_records,
     make_mcq_records,
     make_pairwise_records,
     make_set_generation_records,
@@ -35,6 +43,7 @@ from .validation import print_sanity_checks
 def build_benchmark(config: BuildConfig) -> dict[str, list[dict]]:
     rng = random.Random(config.seed)
     ternary_rng = random.Random(config.seed + 101)
+    mpd_rng = random.Random(config.seed + 202)
     tables = load_mgi_tables(config.paths)
     context_index = build_context_index(tables.pheno, tables.mp_name_by_id, config)
     directional = build_directional_rows(
@@ -65,12 +74,25 @@ def build_benchmark(config: BuildConfig) -> dict[str, list[dict]]:
     ternary_source = balance_ternary_within_split(ternary_source, config)
     ternary_records = make_ternary_records(ternary_source, context_index, config)
 
+    yuan2_strainmeans = load_yuan2_strainmeans(config.mpd_paths)
+    yuan2_regression_source = assign_strain_splits(yuan2_strainmeans, config, mpd_rng)
+    mpd_regression_records = make_mpd_lifespan_regression_records(
+        yuan2_regression_source,
+        config,
+    )
+
+    yuan2_animals = load_yuan2_animals(config.mpd_paths)
+    yuan2_sex_effect_source = build_yuan2_sex_effect_rows(yuan2_animals, config, mpd_rng)
+    mpd_sex_effect_records = make_mpd_sex_effect_records(yuan2_sex_effect_source, config)
+
     return {
         "effect": effect_records,
         "pairwise": pairwise_records,
         "mcq": mcq_records,
         "ternary": ternary_records,
         "set": set_records,
+        "regression": mpd_regression_records,
+        "sex_effect": mpd_sex_effect_records,
     }
 
 
@@ -81,6 +103,12 @@ def write_benchmark(records_by_task: dict[str, list[dict]], output_dir: str) -> 
     save_split_records(records_by_task["ternary"], output_dir, "mgi_ternary")
     save_split_records(records_by_task["set"], output_dir, "mgi_set")
     save_split_records(records_by_task["pairwise"], output_dir, "mgi_pairwise")
+    save_split_records(
+        records_by_task["regression"],
+        output_dir,
+        "mpd_lifespan_regression",
+    )
+    save_split_records(records_by_task["sex_effect"], output_dir, "mpd_sex_effect")
 
 
 def preview_first_effect(records_by_task: dict[str, list[dict]]) -> None:
@@ -97,8 +125,15 @@ def config_from_args(args: argparse.Namespace) -> BuildConfig:
         allele=str(data_dir / "MGI_PhenotypicAllele.rpt"),
         mp_ontology=str(data_dir / "VOC_MammalianPhenotype.rpt"),
     )
+    mpd_data_dir = Path(args.mpd_data_dir)
+    mpd_paths = MPDPaths(
+        yuan2_strainmeans=str(mpd_data_dir / "Yuan2_strainmeans.csv"),
+        yuan2_animals=str(mpd_data_dir / "Yuan2_animal_lifespandays.csv"),
+        yuan2_measureinfo=str(mpd_data_dir / "Yuan2_measureinfo.json"),
+    )
     return replace(
         BuildConfig(paths=paths),
+        mpd_paths=mpd_paths,
         output_dir=args.output_dir,
         seed=args.seed,
         max_pairwise_train=args.max_pairwise_train,
@@ -110,6 +145,7 @@ def config_from_args(args: argparse.Namespace) -> BuildConfig:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="data/mgi")
+    parser.add_argument("--mpd-data-dir", default="data/mpd")
     parser.add_argument("--output-dir", default="output")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-pairwise-train", type=int, default=500)
@@ -128,6 +164,8 @@ def main() -> None:
             "mcq": records_by_task["mcq"],
             "ternary": records_by_task["ternary"],
             "set": records_by_task["set"],
+            "regression": records_by_task["regression"],
+            "sex_effect": records_by_task["sex_effect"],
         },
     )
     if not args.no_preview:

@@ -8,14 +8,24 @@ from pathlib import Path
 from .runner import DEFAULT_ENDPOINT, evaluate_task, make_client
 
 
-ALL_TASKS = ["effect", "mcq", "ternary", "set", "pairwise"]
+ALL_TASKS = ["effect", "mcq", "ternary", "set", "pairwise", "regression", "sex_effect"]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--task",
-        choices=["effect", "mcq", "ternary", "set", "pairwise", "both", "all"],
+        choices=[
+            "effect",
+            "mcq",
+            "ternary",
+            "set",
+            "pairwise",
+            "regression",
+            "sex_effect",
+            "both",
+            "all",
+        ],
         default="both",
     )
     parser.add_argument("--split", choices=["train", "test"], default="test")

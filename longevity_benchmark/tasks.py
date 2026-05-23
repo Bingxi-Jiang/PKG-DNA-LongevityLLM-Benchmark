@@ -281,3 +281,105 @@ def make_pairwise_records(
 
     rng.shuffle(records)
     return records
+
+
+def make_mpd_lifespan_regression_records(df: pd.DataFrame, config: BuildConfig) -> list[dict]:
+    records = []
+    system = (
+        "You are an expert in mouse genetics and aging biology. "
+        "Answer concisely with the requested numeric value only."
+    )
+    for row in df.to_dict("records"):
+        user = (
+            "A colony observation lifespan study followed an inbred mouse strain.\n\n"
+            f"Strain: {row['strain']}\n"
+            f"Sex: {row['sex_label']}\n"
+            "Panel: inbred\n"
+            "Outcome: median lifespan\n\n"
+            "Predict the median lifespan in days for this strain-sex group.\n\n"
+            "Answer with a single number of days."
+        )
+        gold = str(int(row["median_lifespan_days"]))
+        records.append(
+            {
+                "lb_id": "LB-MPD-006",
+                "display_name": "MPD Yuan2 Mouse Lifespan / Regression",
+                "domain": "genetics",
+                "format": "regression",
+                "metric": "mae_days",
+                "units": "days",
+                "task": "Given an inbred mouse strain and sex, predict median lifespan in days.",
+                "split": row["split"],
+                "metadata": {
+                    "source": "MPD Yuan2",
+                    "source_url": "https://phenome.jax.org/projects/Yuan2",
+                    "measure_id": 23201,
+                    "measure": "median lifespan",
+                    "strain": str(row["strain"]),
+                    "strainid": str(row["strainid"]),
+                    "stocknum": str(row.get("stocknum", "")),
+                    "sex": str(row["sex_label"]),
+                    "gold_days": int(row["median_lifespan_days"]),
+                },
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": gold},
+                ],
+            }
+        )
+    return records
+
+
+def make_mpd_sex_effect_records(df: pd.DataFrame, config: BuildConfig) -> list[dict]:
+    records = []
+    for row in df.to_dict("records"):
+        user = (
+            "A colony observation lifespan study followed male and female mice "
+            "from the same inbred strain.\n\n"
+            f"Strain: {row['strain']}\n"
+            "Panel: inbred\n"
+            "Outcome: lifespan in days\n\n"
+            "Which sex had a statistically detectable longer lifespan, or was "
+            "no significant sex difference detected?\n\n"
+            "Answer with exactly one phrase: Female longer / Male longer / "
+            "No significant difference"
+        )
+        records.append(
+            {
+                "lb_id": "LB-MPD-007",
+                "display_name": "MPD Yuan2 Mouse Lifespan / Sex Effect",
+                "domain": "genetics",
+                "format": "ternary",
+                "parser": "sex_effect",
+                "metric": "balanced_accuracy",
+                "units": None,
+                "task": (
+                    "Given an inbred mouse strain, identify whether females, males, "
+                    "or neither sex had significantly longer lifespan."
+                ),
+                "split": row["split"],
+                "metadata": {
+                    "source": "MPD Yuan2",
+                    "source_url": "https://phenome.jax.org/projects/Yuan2",
+                    "measure_id": 23401,
+                    "measure": "lifespan",
+                    "strain": str(row["strain"]),
+                    "strainid": str(row["strainid"]),
+                    "stocknum": str(row["stocknum"]),
+                    "female_n": int(row["female_n"]),
+                    "male_n": int(row["male_n"]),
+                    "female_median_days": float(row["female_median_days"]),
+                    "male_median_days": float(row["male_median_days"]),
+                    "p_value": float(row["p_value"]),
+                    "alpha": 0.05,
+                    "label_source": row["label_source"],
+                },
+                "messages": [
+                    {"role": "system", "content": config.system_prompt},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": row["label"]},
+                ],
+            }
+        )
+    return records

@@ -63,10 +63,14 @@ def pairwise_split_issues(pairwise_records: list[dict]) -> dict[str, Counter]:
 
 def print_task_counts(name: str, records: list[dict]) -> None:
     for split in ["train", "test"]:
+        split_records = [record for record in records if record["split"] == split]
         labels = Counter(
             record["messages"][-1]["content"] for record in records if record["split"] == split
         )
-        print(f"{name}_{split}: labels={dict(labels)}")
+        if len(labels) > 12:
+            print(f"{name}_{split}: n={len(split_records)}, unique_answers={len(labels)}")
+        else:
+            print(f"{name}_{split}: labels={dict(labels)}")
 
 
 def print_sanity_checks(
