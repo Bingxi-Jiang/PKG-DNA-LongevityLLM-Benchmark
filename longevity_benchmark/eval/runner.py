@@ -5,6 +5,12 @@ from __future__ import annotations
 import json
 import os
 import time
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ModuleNotFoundError:
+    pass
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -15,7 +21,7 @@ from ..io import load_jsonl
 from .parsing import PARSERS, strip_think
 
 
-DEFAULT_ENDPOINT = "https://sqrq2pj09htgequ0.us-east-2.aws.endpoints.huggingface.cloud/v1"
+DEFAULT_ENDPOINT = "https://swchnq0ekc3scmqw.us-east-2.aws.endpoints.huggingface.cloud/v1"
 MODEL = "longevity-llm"
 WORKERS = 6  # Stay <= 8 per hackathon guidance.
 
