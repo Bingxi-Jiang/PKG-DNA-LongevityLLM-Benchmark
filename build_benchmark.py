@@ -82,26 +82,33 @@ df = df.drop_duplicates(subset=["allele_symbol","genetic_bg"]).reset_index(drop=
 print(f"All entries: {len(df)}")
 print(df["label"].value_counts().to_string())
 
-# ── 6. Stratified train/test split by gene prefix ────────────────────────────
-# Split each label class separately 70/30 to ensure both splits have all classes
+# ── 6. Gene-level train/test split (no gene appears in both splits) ───────────
+# Split all unique gene symbols globally 70/30, then assign every row by its gene.
+# Genes for the rare "Increased" class are split separately to guarantee both
+# splits contain at least some positive examples.
 
-def stratified_split(sub_df, train_frac=0.7):
-    sub_df = sub_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = max(1, int(len(sub_df) * train_frac))
-    return sub_df.iloc[:n_train], sub_df.iloc[n_train:]
+inc_genes  = list(df[df["label"]=="Increased"]["marker_symbol"].unique())
+rest_genes = list(df[df["label"]!="Increased"]["marker_symbol"].unique())
+# remove any gene that also has an Increased entry (already handled above)
+rest_genes = [g for g in rest_genes if g not in inc_genes]
 
-train_parts, test_parts = [], []
-for label in ["Increased", "Decreased", "Not changed"]:
-    sub = df[df["label"] == label]
-    tr, te = stratified_split(sub)
-    train_parts.append(tr)
-    test_parts.append(te)
+random.shuffle(inc_genes)
+random.shuffle(rest_genes)
 
-train_df = pd.concat(train_parts).reset_index(drop=True)
-test_df  = pd.concat(test_parts).reset_index(drop=True)
-train_df["split"] = "train"
-test_df["split"]  = "test"
-df = pd.concat([train_df, test_df]).reset_index(drop=True)
+n_inc_train  = max(1, int(len(inc_genes)  * 0.7))
+n_rest_train = max(1, int(len(rest_genes) * 0.7))
+
+train_genes = set(inc_genes[:n_inc_train])  | set(rest_genes[:n_rest_train])
+test_genes  = set(inc_genes[n_inc_train:])  | set(rest_genes[n_rest_train:])
+
+df["split"] = df["marker_symbol"].apply(lambda g: "train" if g in train_genes else "test")
+
+train_df = df[df["split"]=="train"]
+test_df  = df[df["split"]=="test"]
+
+# Sanity check: no gene in both splits
+assert len(set(train_df["marker_symbol"]) & set(test_df["marker_symbol"])) == 0, \
+    "Data leakage: same gene appears in train and test!"
 
 print(f"\nTrain: {train_df['label'].value_counts().to_dict()}")
 print(f"Test:  {test_df['label'].value_counts().to_dict()}")
