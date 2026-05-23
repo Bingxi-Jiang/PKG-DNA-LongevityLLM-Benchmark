@@ -169,6 +169,38 @@ accuracy_score(golds, preds)
 
 ---
 
+## Evaluation Results (Longevity-LLM, no thinking)
+
+Evaluated on the test splits using `evaluate.py` with `enable_thinking=False`, `temperature=0.0`, `workers=6`.
+
+### LB-MGI-001 · Ternary (n=588)
+
+| Metric | Score |
+|--------|-------|
+| Balanced accuracy | **0.558** |
+| Random baseline | 0.333 |
+
+Per-class breakdown:
+
+| Label | Correct / Total | Accuracy |
+|-------|----------------|----------|
+| Decreased | 519 / 546 | 0.95 |
+| Not changed | 8 / 36 | 0.22 |
+| Increased | 3 / 6 | 0.50 |
+
+L-LLM correctly identifies decreased-lifespan alleles at very high recall (95%). The `Not changed` class is hardest — the model tends to default to `Decreased` for any phenotype-annotated allele. `Increased` has too few test samples (n=6) for reliable per-class estimates.
+
+### LB-MGI-002 · Pairwise (n=82)
+
+| Metric | Score |
+|--------|-------|
+| Accuracy | **0.817** |
+| Random baseline | 0.500 |
+
+Prediction distribution: A=43, B=39 — no detectable position bias. L-LLM substantially outperforms random chance on ranking murine longevity between pairs of genetically modified strains.
+
+---
+
 ## File Structure
 
 ```

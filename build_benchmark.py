@@ -165,50 +165,46 @@ print(f"\nTask A (Ternary) — total {len(task_a)}")
 
 # ── 9. Task B: Pairwise (naturally balanced by construction) ──────────────────
 
-def make_pairs(group_a_df, group_b_df, n_pairs):
-    """Pair rows from two groups; the one with higher RANK is the correct answer."""
+def make_pairs(group_a_df, group_b_df):
+    """Generate all unique pairs (cartesian product) from two groups.
+    Positions are randomly swapped to prevent position bias.
+    """
     pairs = []
     ga = group_a_df.to_dict("records")
     gb = group_b_df.to_dict("records")
-    random.shuffle(ga); random.shuffle(gb)
-    for i in range(n_pairs):
-        a = ga[i % len(ga)]
-        b = gb[i % len(gb)]
-        # Randomly swap positions to prevent position bias
-        if random.random() < 0.5:
-            a, b = b, a
-        correct = "A" if RANK[a["label"]] > RANK[b["label"]] else "B"
-        split = "train" if (a.get("split")=="train" and b.get("split")=="train") else "test"
-        desc_a = describe_allele(a)
-        desc_b = describe_allele(b)
-        user = (f"Two mouse strains carry different genetic modifications.\n\n"
-                f"=== Mouse A ===\n{desc_a}\n\n"
-                f"=== Mouse B ===\n{desc_b}\n\n"
-                f"Which mouse is expected to live LONGER?\n\n"
-                f"Answer with a single letter: A / B")
-        pairs.append({
-            "lb_id": "LB-MGI-002",
-            "display_name": "MGI Mouse Longevity / Pairwise",
-            "domain": "genetics", "format": "pairwise", "metric": "accuracy",
-            "split": split,
-            "metadata": {"allele_A": a["allele_symbol"], "label_A": a["label"],
-                         "allele_B": b["allele_symbol"], "label_B": b["label"]},
-            "messages": [
-                {"role": "system",    "content": SYSTEM},
-                {"role": "user",      "content": user},
-                {"role": "assistant", "content": correct},
-            ]
-        })
+    for orig_a in ga:
+        for orig_b in gb:
+            a, b = orig_a, orig_b
+            if random.random() < 0.5:
+                a, b = b, a
+            correct = "A" if RANK[a["label"]] > RANK[b["label"]] else "B"
+            split = "train" if (a.get("split")=="train" and b.get("split")=="train") else "test"
+            desc_a = describe_allele(a)
+            desc_b = describe_allele(b)
+            user = (f"Two mouse strains carry different genetic modifications.\n\n"
+                    f"=== Mouse A ===\n{desc_a}\n\n"
+                    f"=== Mouse B ===\n{desc_b}\n\n"
+                    f"Which mouse is expected to live LONGER?\n\n"
+                    f"Answer with a single letter: A / B")
+            pairs.append({
+                "lb_id": "LB-MGI-002",
+                "display_name": "MGI Mouse Longevity / Pairwise",
+                "domain": "genetics", "format": "pairwise", "metric": "accuracy",
+                "split": split,
+                "metadata": {"allele_A": a["allele_symbol"], "label_A": a["label"],
+                             "allele_B": b["allele_symbol"], "label_B": b["label"]},
+                "messages": [
+                    {"role": "system",    "content": SYSTEM},
+                    {"role": "user",      "content": user},
+                    {"role": "assistant", "content": correct},
+                ]
+            })
     return pairs
 
-inc_all = df[df["label"]=="Increased"].to_dict("records")
-dec_all = df[df["label"]=="Decreased"].to_dict("records")
-nc_all  = df[df["label"]=="Not changed"].to_dict("records")
-
 task_b = []
-task_b += make_pairs(df[df["label"]=="Increased"], df[df["label"]=="Decreased"],  80)
-task_b += make_pairs(df[df["label"]=="Increased"], df[df["label"]=="Not changed"], 40)
-task_b += make_pairs(df[df["label"]=="Not changed"],df[df["label"]=="Decreased"],  40)
+task_b += make_pairs(df[df["label"]=="Increased"], df[df["label"]=="Decreased"])
+task_b += make_pairs(df[df["label"]=="Increased"], df[df["label"]=="Not changed"])
+task_b += make_pairs(df[df["label"]=="Not changed"], df[df["label"]=="Decreased"])
 random.shuffle(task_b)
 
 print(f"Task B (Pairwise) — total {len(task_b)}")
