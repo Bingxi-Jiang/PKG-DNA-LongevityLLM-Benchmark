@@ -1,232 +1,211 @@
 # MGI Mouse Longevity Benchmark
 
-A benchmark for evaluating LLMs on predicting the effect of genetic mutations on mouse lifespan, built on top of [Mouse Genome Informatics (MGI)](https://www.informatics.jax.org/) phenotype annotations.
+A benchmark for evaluating whether LLMs can infer the directional effect of
+mouse genetic mutations on lifespan from Mouse Genome Informatics (MGI)
+phenotype annotations.
 
-Part of the **LongevityLLM Hackathon** (Track 01, sponsored by Insilico Medicine).
-
----
+This was built for Track 01 of the LongevityLLM Hackathon.
 
 ## Overview
 
-Most LLM aging benchmarks are human-centric. This task asks a model to reason about murine longevity: given a genetic modification (gene, allele type, inheritance mode, genetic background, and non-lifespan phenotypes), predict whether the mutation **increases**, **decreases**, or leaves **unchanged** the lifespan of the mouse strain.
+Most aging benchmarks are human-centric. This benchmark asks a model to reason
+about murine genetics: given an allele, inheritance mode, genetic background,
+and non-lifespan phenotype profile, predict whether the mutation increases or
+decreases lifespan relative to wild-type controls.
 
-Ground truth is derived from curated MGI Mammalian Phenotype (MP) annotations:
+The current benchmark intentionally avoids a "Not changed" label. In MGI,
+absence of a lifespan phenotype annotation is not verifiable evidence that
+lifespan was unchanged; it may simply mean the phenotype was not tested or not
+curated. Keeping only directional MGI terms gives a cleaner ground truth.
 
-| Label | MP Terms |
-|-------|----------|
-| Increased | MP:0001661 (extended life span), MP:0011614 (slow aging) |
-| Decreased | MP:0002083 (premature death), MP:0003786 (premature aging), MP:0010769 (abnormal survival), MP:0010768 (mortality/aging) |
-| Not changed | Alleles with ≥3 phenotype annotations but no lifespan MP terms |
+## Ground Truth
 
----
+Labels are derived from strict directional Mammalian Phenotype (MP) terms:
+
+| Label | MP terms |
+| --- | --- |
+| Increased | `MP:0001661` extended life span; `MP:0011614` slow aging |
+| Decreased | `MP:0002083` premature death; `MP:0003786` premature aging |
+
+Broader or non-directional terms such as `MP:0010768` mortality/aging and
+`MP:0010769` abnormal survival are excluded from labels.
+
+Each output row includes provenance in `metadata`: allele, gene, genetic
+background, gold MP terms/names, PubMed IDs, and label source.
 
 ## Tasks
 
-### LB-MGI-001 · Ternary Classification
+### LB-MGI-001: Directional Effect
 
-Predict whether a mutation increases, decreases, or does not change lifespan.
+Predict whether the mutation increases or decreases lifespan.
 
-- **Format**: ternary
-- **Metric**: balanced accuracy (handles class imbalance)
-- **Train**: 1,465 samples · **Test**: 629 samples
-- **Class distribution**: Decreased (94%), Not changed (5%), Increased (1%)
+| Property | Value |
+| --- | --- |
+| Format | Binary classification |
+| Metric | Balanced accuracy |
+| Train | 99 prompts |
+| Test | 99 prompts |
+| Train labels | 88 Decreased, 11 Increased |
+| Test labels | 88 Decreased, 11 Increased |
 
-### LB-MGI-002 · Pairwise Comparison
+The decreased class is downsampled within each split to control the natural MGI
+imbalance while preserving all increased examples.
 
-Given two mouse strains (A and B), identify which one lives longer.
+### LB-MGI-002: Pairwise Longevity
 
-- **Format**: pairwise
-- **Metric**: accuracy
-- **Train**: 81 pairs · **Test**: 79 pairs
-- **Pair types**: Increased vs Decreased (50%), Increased vs Not changed (25%), Not changed vs Decreased (25%)
+Given two genetically modified mouse strains, choose which one is expected to
+live longer.
 
----
+| Property | Value |
+| --- | --- |
+| Format | Pairwise comparison |
+| Metric | Accuracy |
+| Train | 500 prompts |
+| Test | 300 prompts |
+| Train answers | 250 A, 250 B |
+| Test answers | 150 A, 150 B |
 
-## Dataset
+Pairwise examples are sampled only within the same split, so a test pair never
+contains a training component.
 
-Built from three MGI bulk download files:
+## Leakage Controls
+
+- Gene-level split: no `marker_symbol` appears in both train and test for the
+  effect task.
+- Pairwise split: pairs are generated from train-train or test-test components
+  only; mixed train-test pairs are not allowed.
+- Prompt context filtering: non-target phenotype context excludes terms whose
+  names contain lifespan/survival/death/lethality/mortality/aging/senescence
+  and related keywords.
+- Conflict removal: genotype/background rows with both increased and decreased
+  directional labels are dropped.
+- Retrieval resistance: prompts are constructed from MGI bulk tables, not from
+  PubMed abstracts or natural-language paper summaries.
+
+Latest sanity checks after regeneration:
+
+```text
+effect gene overlap: 0
+leaky context hits: 0 / 998 prompts
+pairwise train bad_split: 0, labels: A=250, B=250
+pairwise test bad_split: 0, labels: A=150, B=150
+```
+
+## Data Sources
+
+The builder expects three MGI bulk download files:
 
 | File | Description |
-|------|-------------|
-| `MGI_PhenoGenoMP.rpt` | Genotype → MP term associations |
-| `MGI_PhenotypicAllele.rpt` | Allele metadata (type, inheritance, gene) |
-| `VOC_MammalianPhenotype.rpt` | MP ontology (term IDs → names) |
+| --- | --- |
+| `MGI_PhenoGenoMP.rpt` | Genotype to MP term associations |
+| `MGI_PhenotypicAllele.rpt` | Allele metadata |
+| `VOC_MammalianPhenotype.rpt` | MP ontology names/definitions |
 
-To regenerate the data files:
+To download fresh copies:
 
 ```bash
 mkdir -p data/mgi
-curl https://www.informatics.jax.org/downloads/reports/MGI_PhenoGenoMP.rpt     -o data/mgi/MGI_PhenoGenoMP.rpt
+curl https://www.informatics.jax.org/downloads/reports/MGI_PhenoGenoMP.rpt -o data/mgi/MGI_PhenoGenoMP.rpt
 curl https://www.informatics.jax.org/downloads/reports/MGI_PhenotypicAllele.rpt -o data/mgi/MGI_PhenotypicAllele.rpt
 curl https://www.informatics.jax.org/downloads/reports/VOC_MammalianPhenotype.rpt -o data/mgi/VOC_MammalianPhenotype.rpt
 ```
 
-### Train/Test Split
-
-Entries are split 70/30 within each label class (stratified) to ensure all three classes appear in both splits. This prevents data leakage while maintaining class representation.
-
----
-
 ## Prompt Format
 
-Each prompt follows the ChatML format (`system` + `user` + `assistant`). The `assistant` message is the gold answer — strip it before sending to the model.
+Rows are JSONL records with ChatML-style messages. The final assistant message
+is the gold answer and must be stripped before model inference.
 
-**Ternary example:**
+Example:
 
-```
+```text
 [system]
 You are an expert in mouse genetics and aging biology. Answer concisely with exactly one of the provided options.
 
 [user]
 A researcher has engineered a mouse with the following genetic modification:
 
-Gene: Sirt1 (sirtuin 1)
-Allele: Ccdc7a<Tg(Prnp-Sirt1)10Imai>
-Allele type: Transgenic
-Mode of inheritance: Inserted expressed sequence|Hypomorph
-Genetic background: B6.Cg-Ccdc7a<Tg(Prnp-Sirt1)10Imai>
+Gene: Mbp (myelin basic protein)
+Allele: Mbp<jve>
+Allele type: Chemically induced (ENU)
+Mode of inheritance: Null/knockout
+Genetic background: C57BL/6J
 Other observed phenotypes:
-  - increased energy expenditure
-  - increased body temperature
-  - hyperactivity
+  - tremors
+  - abnormal corpus callosum morphology
+  - decreased body weight
+  - decreased locomotor activity
 
-Does this modification INCREASE, DECREASE, or leave UNCHANGED the lifespan of these mice compared to wild-type controls?
+Based on curated mouse phenotype evidence, does this modification INCREASE or DECREASE lifespan compared to wild-type controls?
 
-Answer with exactly one phrase: Increased / Decreased / Not changed
+Answer with exactly one phrase: Increased / Decreased
 
 [assistant]
-Increased
+Decreased
 ```
-
----
 
 ## Quickstart
 
-### Install dependencies
+Install dependencies:
 
 ```bash
-pip install openai pandas pyarrow
+pip install pandas scikit-learn openai httpx
 ```
 
-### Rebuild benchmark
+Rebuild the benchmark:
 
 ```bash
-python build_benchmark.py
-# outputs: output/mgi_ternary_{train,test}.jsonl
-#          output/mgi_pairwise_{train,test}.jsonl
+python -B build_benchmark.py
 ```
 
-### Run evaluation against Longevity-LLM
+Generated files:
 
-```python
-import json, re
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="https://sqrq2pj09htgequ0.us-east-2.aws.endpoints.huggingface.cloud/v1",
-    api_key="<your-hf-token>",
-)
-
-def run_task(jsonl_path):
-    preds, golds = [], []
-    with open(jsonl_path) as f:
-        for line in f:
-            row = json.loads(line)
-            msgs = row["messages"][:-1]        # drop gold answer
-            gold = row["messages"][-1]["content"].strip()
-            r = client.chat.completions.create(
-                model="longevity-llm",
-                messages=msgs,
-                max_tokens=50,
-                temperature=0.0,
-            )
-            pred = r.choices[0].message.content.strip()
-            preds.append(pred)
-            golds.append(gold)
-    return preds, golds
-
-preds, golds = run_task("output/mgi_ternary_test.jsonl")
+```text
+output/mgi_effect_train.jsonl
+output/mgi_effect_test.jsonl
+output/mgi_pairwise_train.jsonl
+output/mgi_pairwise_test.jsonl
 ```
 
-### Scoring
+Run evaluation against the hosted Longevity-LLM endpoint:
 
-```python
-from sklearn.metrics import balanced_accuracy_score, accuracy_score
-
-# Ternary task
-balanced_accuracy_score(golds, preds)
-
-# Pairwise task
-accuracy_score(golds, preds)
+```bash
+set HF_TOKEN=<your-token>
+python evaluate.py --task both --split test
 ```
 
-### Baseline (random)
+Useful options:
 
-| Task | Random baseline |
-|------|----------------|
-| Ternary | 33.3% balanced accuracy |
-| Pairwise | 50.0% accuracy |
+```bash
+python evaluate.py --task effect --limit 10
+python evaluate.py --task pairwise --think
+python evaluate.py --endpoint https://<endpoint>/v1
+```
 
----
+## Scoring
 
-## Evaluation Results (Longevity-LLM, no thinking)
+- Effect task: balanced accuracy, with random baseline 0.5.
+- Pairwise task: accuracy, with random baseline 0.5.
 
-Evaluated on the test splits using `evaluate.py` with `enable_thinking=False`, `temperature=0.0`, `workers=6`.
-
-### LB-MGI-001 · Ternary (n=588)
-
-| Metric | Score |
-|--------|-------|
-| Balanced accuracy | **0.558** |
-| Random baseline | 0.333 |
-
-Per-class breakdown:
-
-| Label | Correct / Total | Accuracy |
-|-------|----------------|----------|
-| Decreased | 519 / 546 | 0.95 |
-| Not changed | 8 / 36 | 0.22 |
-| Increased | 3 / 6 | 0.50 |
-
-L-LLM correctly identifies decreased-lifespan alleles at very high recall (95%). The `Not changed` class is hardest — the model tends to default to `Decreased` for any phenotype-annotated allele. `Increased` has too few test samples (n=6) for reliable per-class estimates.
-
-### LB-MGI-002 · Pairwise (n=82)
-
-| Metric | Score |
-|--------|-------|
-| Accuracy | **0.817** |
-| Random baseline | 0.500 |
-
-Prediction distribution: A=43, B=39 — no detectable position bias. L-LLM substantially outperforms random chance on ranking murine longevity between pairs of genetically modified strains.
-
----
+The evaluator strips model thinking traces before parsing final answers.
 
 ## File Structure
 
-```
+```text
 .
-├── build_benchmark.py        # Dataset builder
-├── README.md
-├── .gitignore
-├── data/                     # Raw MGI files (not committed)
-│   └── mgi/
-│       ├── MGI_PhenoGenoMP.rpt
-│       ├── MGI_PhenotypicAllele.rpt
-│       └── VOC_MammalianPhenotype.rpt
-├── output/                   # Generated JSONL files (not committed)
-│   ├── mgi_ternary_train.jsonl
-│   ├── mgi_ternary_test.jsonl
-│   ├── mgi_pairwise_train.jsonl
-│   └── mgi_pairwise_test.jsonl
-└── longebench/               # Original LongeBench dataset (HF submodule)
+|-- build_benchmark.py
+|-- evaluate.py
+|-- README.md
+|-- data/
+|   `-- mgi/
+|       |-- MGI_PhenoGenoMP.rpt
+|       |-- MGI_PhenotypicAllele.rpt
+|       `-- VOC_MammalianPhenotype.rpt
+`-- output/
+    |-- mgi_effect_train.jsonl
+    |-- mgi_effect_test.jsonl
+    |-- mgi_pairwise_train.jsonl
+    `-- mgi_pairwise_test.jsonl
 ```
 
----
-
-## Design Notes
-
-**Retrieval resistance**: Prompts are constructed from raw MGI bulk download tables rather than PubMed abstracts. The specific allele symbol + background strain combinations are unlikely to appear verbatim in LLM training corpora.
-
-**Class imbalance**: MGI is biased toward disease models (premature death), so `Decreased` dominates. Balanced accuracy is used as the primary metric; the pairwise task is constructed to be balanced by design.
-
-**Leakage prevention**: The `Not changed` class is derived from absence of lifespan MP annotations — these are alleles with known, well-characterized phenotypes that were simply never shown to affect lifespan, not untested alleles.
+Legacy `mgi_ternary_*` files may exist in local output directories from older
+builds, but they are not part of the current recommended benchmark.
