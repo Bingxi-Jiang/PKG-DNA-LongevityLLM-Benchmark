@@ -98,17 +98,41 @@ def build_benchmark(config: BuildConfig) -> dict[str, list[dict]]:
 
 def write_benchmark(records_by_task: dict[str, list[dict]], output_dir: str) -> None:
     print("\n=== Output ===")
-    save_split_records(records_by_task["effect"], output_dir, "mgi_effect")
-    save_split_records(records_by_task["mcq"], output_dir, "mgi_mcq")
-    save_split_records(records_by_task["ternary"], output_dir, "mgi_ternary")
-    save_split_records(records_by_task["set"], output_dir, "mgi_set")
-    save_split_records(records_by_task["pairwise"], output_dir, "mgi_pairwise")
+    save_split_records(
+        records_by_task["effect"],
+        output_dir,
+        "mgi_mutation_lifespan_direction_binary",
+    )
+    save_split_records(
+        records_by_task["mcq"],
+        output_dir,
+        "mgi_mutation_lifespan_effect_mcq",
+    )
+    save_split_records(
+        records_by_task["ternary"],
+        output_dir,
+        "mgi_mutation_lifespan_effect_ternary_inconclusive",
+    )
+    save_split_records(
+        records_by_task["set"],
+        output_dir,
+        "mgi_mutation_directional_lifespan_mp_terms_set_generation",
+    )
+    save_split_records(
+        records_by_task["pairwise"],
+        output_dir,
+        "mgi_mutation_lifespan_longer_lived_pairwise",
+    )
     save_split_records(
         records_by_task["regression"],
         output_dir,
-        "mpd_lifespan_regression",
+        "mpd_strain_sex_median_lifespan_days_regression",
     )
-    save_split_records(records_by_task["sex_effect"], output_dir, "mpd_sex_effect")
+    save_split_records(
+        records_by_task["sex_effect"],
+        output_dir,
+        "mpd_strain_lifespan_sex_difference_ternary",
+    )
 
 
 def preview_first_effect(records_by_task: dict[str, list[dict]]) -> None:

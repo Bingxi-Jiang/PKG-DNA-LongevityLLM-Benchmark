@@ -283,21 +283,24 @@ python -m longevity_benchmark.build --no-preview
 Generated files:
 
 ```text
-output/mgi_effect_train.jsonl
-output/mgi_effect_test.jsonl
-output/mgi_mcq_train.jsonl
-output/mgi_mcq_test.jsonl
-output/mgi_ternary_train.jsonl
-output/mgi_ternary_test.jsonl
-output/mgi_set_train.jsonl
-output/mgi_set_test.jsonl
-output/mgi_pairwise_train.jsonl
-output/mgi_pairwise_test.jsonl
-output/mpd_lifespan_regression_train.jsonl
-output/mpd_lifespan_regression_test.jsonl
-output/mpd_sex_effect_train.jsonl
-output/mpd_sex_effect_test.jsonl
+output/mgi_mutation_lifespan_direction_binary_train.jsonl
+output/mgi_mutation_lifespan_direction_binary_test.jsonl
+output/mgi_mutation_lifespan_effect_mcq_train.jsonl
+output/mgi_mutation_lifespan_effect_mcq_test.jsonl
+output/mgi_mutation_lifespan_effect_ternary_inconclusive_train.jsonl
+output/mgi_mutation_lifespan_effect_ternary_inconclusive_test.jsonl
+output/mgi_mutation_directional_lifespan_mp_terms_set_generation_train.jsonl
+output/mgi_mutation_directional_lifespan_mp_terms_set_generation_test.jsonl
+output/mgi_mutation_lifespan_longer_lived_pairwise_train.jsonl
+output/mgi_mutation_lifespan_longer_lived_pairwise_test.jsonl
+output/mpd_strain_sex_median_lifespan_days_regression_train.jsonl
+output/mpd_strain_sex_median_lifespan_days_regression_test.jsonl
+output/mpd_strain_lifespan_sex_difference_ternary_train.jsonl
+output/mpd_strain_lifespan_sex_difference_ternary_test.jsonl
 ```
+
+Output names follow `source_subject_prediction-target_format_split.jsonl`, so
+the file name identifies both the task format and the biological question.
 
 Copy `.env.example` to `.env` and fill in the API keys for the providers you
 want to use:
@@ -481,12 +484,14 @@ Columns:
 ```bash
 python score_traces.py \
   --results output/eval/results_ternary_test_longevity_longevity-llm_think.jsonl \
-  --out output/eval/trace_scores_ternary.jsonl
+  --out output/eval/trace_scores_mgi_mutation_lifespan_effect_ternary_inconclusive.jsonl
 ```
 
 This prints sub-score means, point-biserial correlation between each
 sub-score and final-answer correctness, fabrication tallies, and the
 lowest- and highest-scoring traces for manual review.
+Evaluation result files use the short CLI task alias, while dataset JSONL files
+use the longer descriptive names.
 
 ## File Structure
 
@@ -519,24 +524,24 @@ lowest- and highest-scoring traces for manual review.
 |       |-- Yuan2_animal_lifespandays.csv
 |       `-- Yuan2_measureinfo.json
 `-- output/
-    |-- mgi_effect_train.jsonl
-    |-- mgi_effect_test.jsonl
-    |-- mgi_mcq_train.jsonl
-    |-- mgi_mcq_test.jsonl
-    |-- mgi_ternary_train.jsonl
-    |-- mgi_ternary_test.jsonl
-    |-- mgi_set_train.jsonl
-    |-- mgi_set_test.jsonl
-    |-- mgi_pairwise_train.jsonl
-    |-- mgi_pairwise_test.jsonl
-    |-- mpd_lifespan_regression_train.jsonl
-    |-- mpd_lifespan_regression_test.jsonl
-    |-- mpd_sex_effect_train.jsonl
-    `-- mpd_sex_effect_test.jsonl
+    |-- mgi_mutation_lifespan_direction_binary_train.jsonl
+    |-- mgi_mutation_lifespan_direction_binary_test.jsonl
+    |-- mgi_mutation_lifespan_effect_mcq_train.jsonl
+    |-- mgi_mutation_lifespan_effect_mcq_test.jsonl
+    |-- mgi_mutation_lifespan_effect_ternary_inconclusive_train.jsonl
+    |-- mgi_mutation_lifespan_effect_ternary_inconclusive_test.jsonl
+    |-- mgi_mutation_directional_lifespan_mp_terms_set_generation_train.jsonl
+    |-- mgi_mutation_directional_lifespan_mp_terms_set_generation_test.jsonl
+    |-- mgi_mutation_lifespan_longer_lived_pairwise_train.jsonl
+    |-- mgi_mutation_lifespan_longer_lived_pairwise_test.jsonl
+    |-- mpd_strain_sex_median_lifespan_days_regression_train.jsonl
+    |-- mpd_strain_sex_median_lifespan_days_regression_test.jsonl
+    |-- mpd_strain_lifespan_sex_difference_ternary_train.jsonl
+    `-- mpd_strain_lifespan_sex_difference_ternary_test.jsonl
 ```
 
-The current `mgi_ternary_*` files use an `Inconclusive` label, not a
-`Not changed` label.
+The current `mgi_mutation_lifespan_effect_ternary_inconclusive_*` files use an
+`Inconclusive` label, not a `Not changed` label.
 
 ## Extending
 

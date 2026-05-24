@@ -44,13 +44,13 @@ PROVIDER_CONFIGS: dict[str, dict] = {
 WORKERS = 6  # Stay <= 8 per hackathon guidance.
 
 TASK_FILE_PREFIX = {
-    "effect": "mgi_effect",
-    "mcq": "mgi_mcq",
-    "ternary": "mgi_ternary",
-    "set": "mgi_set",
-    "pairwise": "mgi_pairwise",
-    "regression": "mpd_lifespan_regression",
-    "sex_effect": "mpd_sex_effect",
+    "effect": "mgi_mutation_lifespan_direction_binary",
+    "mcq": "mgi_mutation_lifespan_effect_mcq",
+    "ternary": "mgi_mutation_lifespan_effect_ternary_inconclusive",
+    "set": "mgi_mutation_directional_lifespan_mp_terms_set_generation",
+    "pairwise": "mgi_mutation_lifespan_longer_lived_pairwise",
+    "regression": "mpd_strain_sex_median_lifespan_days_regression",
+    "sex_effect": "mpd_strain_lifespan_sex_difference_ternary",
 }
 
 

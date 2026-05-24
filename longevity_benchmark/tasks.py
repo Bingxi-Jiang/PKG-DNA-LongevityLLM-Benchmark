@@ -94,7 +94,7 @@ def make_mcq_records(
         records.append(
             {
                 "lb_id": "LB-MGI-003",
-                "pool": "mgi_mcq_effect",
+                    "pool": "mgi_mutation_lifespan_effect_mcq",
                 "display_name": "MGI Mouse Longevity / Multiple Choice Effect",
                 "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
@@ -141,7 +141,7 @@ def make_ternary_records(
         records.append(
             {
                 "lb_id": "LB-MGI-004",
-                "pool": "mgi_ternary_inconclusive",
+                    "pool": "mgi_mutation_lifespan_effect_ternary_inconclusive",
                 "display_name": "MGI Mouse Longevity / Ternary Inconclusive",
                 "display_group": "MGI Mouse Longevity",
                 "domain": "genetics",
@@ -267,7 +267,7 @@ def make_pairwise_records(
             records.append(
                 {
                     "lb_id": "LB-MGI-002",
-                    "pool": "mgi_pairwise",
+                        "pool": "mgi_mutation_lifespan_longer_lived_pairwise",
                     "display_name": "MGI Mouse Longevity / Pairwise",
                     "display_group": "MGI Mouse Longevity",
                     "domain": "genetics",

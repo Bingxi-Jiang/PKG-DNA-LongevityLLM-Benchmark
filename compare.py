@@ -31,22 +31,14 @@ except ModuleNotFoundError:
 
 import argparse
 
+from longevity_benchmark.eval.runner import TASK_FILE_PREFIX
+
 # ── constants ────────────────────────────────────────────────────────────────
 
 ALL_PROVIDERS = ["longevity", "gemini", "claude"]
 
-TASK_FILE_PREFIX = {
-    "effect":     "mgi_effect",
-    "mcq":        "mgi_mcq",
-    "ternary":    "mgi_ternary",
-    "set":        "mgi_set",
-    "pairwise":   "mgi_pairwise",
-    "regression": "mpd_lifespan_regression",
-    "sex_effect": "mpd_sex_effect",
-}
-
 # Tasks where weighted-similarity baseline makes sense (classification only).
-BASELINE_TASKS = {"effect", "ternary", "sex_effect", "mcq"}
+BASELINE_TASKS = {"effect", "ternary", "mcq"}
 
 # Feature weights for the weighted-similarity predictor.
 FEATURE_WEIGHTS = {

@@ -18,7 +18,11 @@ Usage:
     # Step 3 (optional): export per-row scores for offline analysis
     python score_traces.py \\
         --results output/eval/results_effect_test_longevity_longevity-llm_think.jsonl \\
-        --out output/eval/trace_scores_effect.jsonl
+        --out output/eval/trace_scores_mgi_mutation_lifespan_direction_binary.jsonl
+
+Evaluation result files are keyed by the CLI task alias, such as ``effect`` or
+``ternary``. Dataset JSONL files use the longer descriptive names registered in
+``longevity_benchmark.eval.runner.TASK_FILE_PREFIX``.
 """
 
 from __future__ import annotations
