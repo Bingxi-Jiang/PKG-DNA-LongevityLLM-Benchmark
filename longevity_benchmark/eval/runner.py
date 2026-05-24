@@ -317,6 +317,7 @@ def evaluate_task(
     provider: str,
     enable_thinking: bool,
     limit: int | None,
+    score_traces: bool = False,
 ) -> None:
     data_path = Path(input_dir) / f"{TASK_FILE_PREFIX[task]}_{split}.jsonl"
     if not data_path.exists():
@@ -351,6 +352,29 @@ def evaluate_task(
         "metric": metric,
         "baseline": round(baseline, 4),
     }
+
+    # Optional reasoning-trace scoring (only useful when thinking was enabled).
+    if score_traces:
+        if not enable_thinking:
+            print("Note: --score-traces was set but --think was off; skipping trace scoring.")
+        else:
+            from ..reasoning_scorer import annotate_results_inplace
+            trace_summary = annotate_results_inplace(results)
+            # Rewrite the log file with annotated rows so the per-row trace_score is persisted.
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                for result in results:
+                    log_file.write(json.dumps(result, ensure_ascii=False) + "\n")
+            mean_ts = trace_summary["mean_trace_score"]
+            print(
+                f"  Trace quality: mean={mean_ts:.3f}  "
+                f"fabricated_genes={trace_summary['fabricated_gene_mentions']}  "
+                f"fabricated_alleles={trace_summary['fabricated_allele_mentions']}  "
+                f"invalid_mp_ids={trace_summary['invalid_mp_ids']}"
+                if mean_ts is not None else
+                "  Trace quality: (no scorable traces)"
+            )
+            summary["trace_quality"] = trace_summary
+
     summary_path = Path(eval_dir) / f"summary_{task}_{split}_{file_tag}.json"
     with open(summary_path, "w", encoding="utf-8") as summary_file:
         json.dump(summary, summary_file, indent=2)

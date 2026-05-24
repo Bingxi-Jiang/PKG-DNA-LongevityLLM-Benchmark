@@ -57,6 +57,14 @@ FEATURE_WEIGHTS = {
 
 K_NEIGHBORS = 5
 
+# Per-provider worker count. Gemini free tier is 10 RPM, so we use 2 workers
+# to stay well under it and avoid silent 429-retry stalls inside the SDK.
+PROVIDER_WORKERS = {
+    "longevity": 6,
+    "gemini":    2,
+    "claude":    4,
+}
+
 # weighted-similarity baseline
 
 def _parse_meta(raw) -> dict:
@@ -134,7 +142,8 @@ def run_provider(
     results: list[dict] = []
     n_errors = 0
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    workers = PROVIDER_WORKERS.get(provider, 4)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {
             ex.submit(call_model, row, client, model, provider, enable_thinking): row
             for row in test_rows
@@ -212,6 +221,55 @@ def print_row_table(all_results: dict[str, list[dict]], test_rows: list[dict]) -
         print(line)
 
     print(sep)
+
+
+def annotate_compare_results(all_results: dict[str, list[dict]]) -> None:
+    """Score traces in-place for every method whose results contain a `think` field."""
+    from longevity_benchmark.reasoning_scorer import (
+        load_allele_db, load_gene_db, load_mp_term_db, score_one,
+    )
+    gene_db, allele_db, mp_db = load_gene_db(), load_allele_db(), load_mp_term_db()
+    for _, results in all_results.items():
+        if not results or not any((r.get("think") or "").strip() for r in results):
+            continue
+        for r in results:
+            ts = score_one(r, gene_db, allele_db, mp_db)
+            r["trace_score"] = ts.aggregate
+            subs = dict(ts.subscores)
+            gv = ts.details.get("gene_validity") or {}
+            av = ts.details.get("allele_validity") or {}
+            mv = ts.details.get("mp_validity") or {}
+            subs["_fab_genes"]   = gv.get("invalid", [])
+            subs["_fab_alleles"] = av.get("invalid", [])
+            subs["_invalid_mp"]  = sum(
+                1 for d in mv.get("details", []) if d.get("status") == "invalid_id"
+            )
+            r["trace_subscores"] = subs
+
+
+def print_trace_quality_table(all_results: dict[str, list[dict]]) -> None:
+    rows_with_scores = {
+        name: [r for r in res if r.get("trace_score") is not None]
+        for name, res in all_results.items()
+    }
+    if not any(rows_with_scores.values()):
+        return
+
+    print("\n── Reasoning trace quality " + "─" * 33)
+    print(f"  {'method':<22}  {'mean':>6}  {'cov':>5}  {'fab_gene':>8}  {'fab_allele':>10}  {'bad_mp':>6}")
+    for name, _results in all_results.items():
+        short  = _short_label(name)
+        scored = rows_with_scores.get(name, [])
+        if not scored:
+            continue
+        vals = [r["trace_score"] for r in scored]
+        mean_score = sum(vals) / len(vals)
+        cov = len(scored) / len(_results) if _results else 0.0
+        fab_g  = sum(len((r.get("trace_subscores") or {}).get("_fab_genes",   [])) for r in scored)
+        fab_a  = sum(len((r.get("trace_subscores") or {}).get("_fab_alleles", [])) for r in scored)
+        bad_mp = sum((r.get("trace_subscores") or {}).get("_invalid_mp", 0) for r in scored)
+        print(f"  {short:<22}  {mean_score:>6.3f}  {cov:>4.0%}  {fab_g:>8}  {fab_a:>10}  {bad_mp:>6}")
+    print()
 
 
 def print_summary_table(all_results: dict[str, list[dict]], n_total: int) -> None:
@@ -330,9 +388,18 @@ def run_task(
         print("  No results — check API keys.\n")
         return
 
-    # 3. Display
+    # 3. Score reasoning traces (only methods that ran with thinking will have non-empty traces)
+    if thinking:
+        print("Scoring reasoning traces (loading MGI/MP databases…) ", end="", flush=True)
+        t0 = time.time()
+        annotate_compare_results(all_results)
+        print(f"done in {time.time() - t0:.1f}s")
+
+    # 4. Display
     print_row_table(all_results, test_rows)
     print_summary_table(all_results, len(test_rows))
+    if thinking:
+        print_trace_quality_table(all_results)
     print_disagreement(all_results, test_rows)
 
     # 4. Save

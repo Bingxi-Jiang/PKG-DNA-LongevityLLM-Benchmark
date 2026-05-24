@@ -391,6 +391,103 @@ python evaluate.py --provider claude --model claude-opus-4-7 --think --limit 10
 
 The evaluator strips model thinking traces before parsing final answers.
 
+## Cross-Provider Comparison
+
+`compare.py` runs LongevityLLM, Gemini, and Claude on the same rows and prints
+a side-by-side comparison along with a deterministic weighted-feature
+similarity baseline (K-nearest-neighbour majority vote over the training
+split, with feature weights `allele_type` 40%, `gene` 30%,
+`genetic_background` 30%).
+
+```bash
+# All three providers + baseline on the effect task
+python compare.py --task effect --split test
+
+# Smoke test, skip Claude (no API key)
+python compare.py --task effect --providers longevity gemini --limit 20
+
+# All tasks
+python compare.py --task all --split test --limit 30
+```
+
+Output sections:
+
+- Per-row table (gold + each method's prediction with ✓/✗).
+- Accuracy summary with bar chart.
+- Pairwise agreement matrix (how often methods agree with each other).
+- Rows-with-disagreement listing for manual inspection.
+
+Results are saved to `output/compare/compare_{task}_{split}_{methods}.json`.
+
+## Reasoning Trace Scoring
+
+When `--think` is enabled, the model emits a chain-of-thought trace before
+its answer. `reasoning_scorer` evaluates the trace's biological correctness
+against the actual MGI/MP ontology databases — no LLM-in-the-loop required.
+
+Five sub-scores per trace (each in `[0, 1]`):
+
+| Sub-score | What it checks | Source of truth |
+| --- | --- | --- |
+| `allele_validity` | Allele symbols cited (e.g. `Sirt6<tm1Caid>`) exist in MGI | `MGI_PhenotypicAllele.rpt` (~129k alleles) |
+| `gene_validity` | Gene symbols cited in explicit gene contexts ("the X gene", "X knockout") are real MGI markers | MGI marker symbols (~35k genes) |
+| `mp_validity` | Cited `MP:NNNNNNN` IDs exist and their claimed names match the ontology (Jaccard ≥ 0.4) | `VOC_MammalianPhenotype.rpt` (~15k terms) |
+| `answer_consistency` | Directional language at the end of the trace aligns with the final classification answer | Built-in direction vocab |
+| `prompt_grounding` | Entities cited in the trace (gene/allele/strain) appear in the prompt's metadata, not in unrelated biology | Row metadata |
+
+The aggregate is a weighted mean of present sub-scores (missing dimensions
+are excluded rather than scored 0, so a trace with no MP-term mentions is
+not penalised for it).
+
+### Integration with evaluation
+
+Add `--score-traces` to `evaluate.py` to compute trace quality alongside
+accuracy:
+
+```bash
+python evaluate.py --provider longevity --task ternary --think --score-traces
+```
+
+The per-row `results_*.jsonl` is extended with `trace_score` and
+`trace_subscores`, and the `summary_*.json` gets a `trace_quality` block
+with the global mean and hallucination counts.
+
+### Integration with cross-provider comparison
+
+`compare.py --think` auto-scores traces for every provider that emits them
+(currently `longevity` and `claude`) and prints a fifth section comparing
+reasoning quality:
+
+```bash
+python compare.py --task ternary --providers longevity claude --think --limit 30
+```
+
+```text
+── Reasoning trace quality ─────────────────────
+  method              mean    cov  fab_gene  fab_allele  bad_mp
+  longevity          0.867  100%         0           0       0
+  claude             0.812   95%         1           0       0
+```
+
+Columns:
+
+- `mean` — average aggregate trace score across rows that had a scorable trace.
+- `cov`  — fraction of rows that produced a scorable trace.
+- `fab_gene` / `fab_allele` — raw count of fabricated gene / allele symbols across all traces (mentioned in a gene context but not present in MGI).
+- `bad_mp` — count of `MP:` IDs cited that do not exist in the ontology.
+
+### Standalone scoring (for already-saved results)
+
+```bash
+python score_traces.py \
+  --results output/eval/results_ternary_test_longevity_longevity-llm_think.jsonl \
+  --out output/eval/trace_scores_ternary.jsonl
+```
+
+This prints sub-score means, point-biserial correlation between each
+sub-score and final-answer correctness, fabrication tallies, and the
+lowest- and highest-scoring traces for manual review.
+
 ## File Structure
 
 ```text

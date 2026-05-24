@@ -22,6 +22,13 @@ def main() -> None:
     )
     parser.add_argument("--split", choices=["train", "test"], default="test")
     parser.add_argument("--think", action="store_true", help="Enable chain-of-thought thinking (longevity and claude providers only).")
+    parser.add_argument(
+        "--score-traces", action="store_true",
+        help="After evaluation, score each reasoning trace against MGI/MP databases "
+             "(gene/allele/MP-term validity, answer consistency, prompt grounding). "
+             "Requires --think to produce traces; the per-row JSONL and summary JSON "
+             "are extended with trace_score / trace_subscores.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Cap the number of rows per task (useful for quick smoke tests).")
     parser.add_argument(
         "--provider",
@@ -63,6 +70,7 @@ def main() -> None:
             provider=args.provider,
             enable_thinking=args.think,
             limit=args.limit,
+            score_traces=args.score_traces,
         )
 
 
