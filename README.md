@@ -265,7 +265,7 @@ Decreased
 Install dependencies:
 
 ```bash
-pip install pandas scikit-learn openai httpx
+pip install pandas scikit-learn openai httpx matplotlib
 ```
 
 Rebuild the benchmark:
@@ -492,6 +492,19 @@ sub-score and final-answer correctness, fabrication tallies, and the
 lowest- and highest-scoring traces for manual review.
 Evaluation result files use the short CLI task alias, while dataset JSONL files
 use the longer descriptive names.
+
+To visualize all saved `compare.py` outputs in one graph:
+
+```bash
+python score_traces.py --plot-all \
+  --compare-dir output/compare \
+  --plot-out output/compare/llm_task_performance.png
+```
+
+This writes a single grouped bar chart comparing the LLM methods saved by
+`compare.py` across tasks. Regression is normalized as `1 - MAE / gold lifespan
+range` so higher bars are better across the whole figure. The similarity
+baseline is excluded by default; add `--plot-include-baseline` to include it.
 
 ## File Structure
 
