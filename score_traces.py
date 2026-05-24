@@ -15,6 +15,12 @@ Usage:
     python score_traces.py \\
         --results output/eval/results_effect_test_longevity_longevity-llm_think.jsonl
 
+    # Batch-score every saved thinking run for every provider/model
+    python score_traces.py --providers all --task all --split test
+
+    # Batch-score selected saved models
+    python score_traces.py --models openai:gpt-5.5 claude:claude-sonnet-4-6 --task ternary
+
     # Step 3 (optional): export per-row scores for offline analysis
     python score_traces.py \\
         --results output/eval/results_effect_test_longevity_longevity-llm_think.jsonl \\
@@ -43,11 +49,13 @@ from pathlib import Path
 from statistics import mean, pstdev
 
 from longevity_benchmark.reasoning_scorer import (
+    annotate_results_inplace,
     load_allele_db,
     load_gene_db,
     load_mp_term_db,
     score_results_file,
 )
+from longevity_benchmark.eval.runner import PROVIDER_CONFIGS
 
 
 TASK_ORDER = ["effect", "mcq", "ternary", "set", "pairwise", "regression", "sex_effect"]
@@ -61,6 +69,61 @@ TASK_LABELS = {
     "regression": "MPD strain-sex\nmedian lifespan\nregression",
     "sex_effect": "MPD strain\nsex difference\nternary",
 }
+
+TRACE_DIMS = [
+    "gene_validity",
+    "allele_validity",
+    "mp_validity",
+    "answer_consistency",
+    "prompt_grounding",
+    "knowledge_extension",
+    "pathway_consistency",
+]
+
+
+def _expand_providers(values: list[str] | None, parser: argparse.ArgumentParser) -> list[str]:
+    if values is None:
+        return list(PROVIDER_CONFIGS)
+    if "all" in values:
+        if len(values) > 1:
+            parser.error("--providers all cannot be combined with other provider names.")
+        return list(PROVIDER_CONFIGS)
+    return values
+
+
+def _parse_model_filters(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> tuple[set[str], dict[str, set[str]]]:
+    providers = _expand_providers(args.providers, parser)
+    if args.model and args.models:
+        parser.error("Use either --model or --models, not both.")
+    if args.model and len(providers) != 1:
+        parser.error("--model can only be used with one provider. Use --models provider:model ... instead.")
+
+    model_filters: dict[str, set[str]] = defaultdict(set)
+    if args.model:
+        model_filters[providers[0]].add(args.model)
+
+    if args.models:
+        bare_specs = [spec for spec in args.models if ":" not in spec]
+        if bare_specs and len(providers) != 1:
+            parser.error("Bare --models entries require exactly one --provider/--providers value.")
+        fallback_provider = providers[0] if len(providers) == 1 else None
+        for raw_spec in args.models:
+            if ":" in raw_spec:
+                provider, model = raw_spec.split(":", 1)
+                if not provider or not model:
+                    parser.error(f"Invalid --models entry: {raw_spec!r}. Use provider:model.")
+            else:
+                provider, model = fallback_provider, raw_spec
+            if provider not in PROVIDER_CONFIGS:
+                parser.error(
+                    f"Unknown provider {provider!r}. Choose from: {', '.join(PROVIDER_CONFIGS)}."
+                )
+            model_filters[provider].add(model)
+
+    return set(providers), model_filters
 
 
 def _fmt(v: float | None, digits: int = 3) -> str:
@@ -92,6 +155,12 @@ def _read_jsonl(path: Path) -> list[dict]:
             if line.strip():
                 rows.append(json.loads(line))
     return rows
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _as_float(value: object) -> float | None:
@@ -243,6 +312,171 @@ def _load_eval_records(
     return list(records_by_key.values())
 
 
+def _summary_thinking(summary_path: Path, payload: dict) -> bool:
+    if "thinking" in payload:
+        return bool(payload.get("thinking"))
+    stem = summary_path.stem
+    return stem.endswith("_think") and not stem.endswith("_nothink")
+
+
+def _load_trace_targets(
+    eval_dir: Path,
+    task: str,
+    split: str,
+    thinking: str,
+    provider_filter: set[str],
+    model_filters: dict[str, set[str]],
+) -> list[dict]:
+    targets = []
+    for summary_path in sorted(eval_dir.glob("summary_*.json")):
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+
+        task_name = str(payload.get("task", ""))
+        split_name = str(payload.get("split", ""))
+        provider = str(payload.get("provider", ""))
+        model = str(payload.get("model", ""))
+        is_thinking = _summary_thinking(summary_path, payload)
+
+        if task != "all" and task_name != task:
+            continue
+        if split != "all" and split_name != split:
+            continue
+        if provider not in provider_filter:
+            continue
+        if model_filters and model not in model_filters.get(provider, set()):
+            continue
+        if thinking == "think" and not is_thinking:
+            continue
+        if thinking == "nothink" and is_thinking:
+            continue
+
+        result_path = _summary_result_path(summary_path, payload)
+        if not result_path.exists():
+            continue
+
+        targets.append(
+            {
+                "summary_path": summary_path,
+                "result_path": result_path,
+                "summary": payload,
+                "task": task_name,
+                "split": split_name,
+                "provider": provider,
+                "model": model,
+                "thinking": is_thinking,
+            }
+        )
+    return targets
+
+
+def _score_trace_targets(
+    targets: list[dict],
+    rerun: bool,
+) -> list[dict]:
+    if not targets:
+        return []
+
+    print("Loading databases...")
+    gene_db = load_gene_db()
+    allele_db = load_allele_db()
+    mp_db = load_mp_term_db()
+    print(f"  genes={len(gene_db):,}   alleles={len(allele_db):,}   mp_terms={len(mp_db):,}")
+
+    reports = []
+    for target in targets:
+        summary_path = target["summary_path"]
+        result_path = target["result_path"]
+        summary = target["summary"]
+        provider = target["provider"]
+        model = target["model"]
+        task = target["task"]
+        split = target["split"]
+
+        if not rerun and _trace_quality_complete(summary.get("trace_quality")):
+            trace_quality = summary.get("trace_quality") or {}
+            reports.append(
+                {
+                    "task": task,
+                    "split": split,
+                    "provider": provider,
+                    "model": model,
+                    "status": "skipped",
+                    "n": trace_quality.get("n", summary.get("n", 0)),
+                    "rows_with_trace": trace_quality.get("rows_with_trace", 0),
+                    "mean_trace_score": trace_quality.get("mean_trace_score"),
+                }
+            )
+            print(f"Skipping {task} | {provider}:{model} | trace_quality already present")
+            continue
+
+        rows = _read_jsonl(result_path)
+        trace_quality = annotate_results_inplace(rows, gene_db, allele_db, mp_db)
+        _write_jsonl(result_path, rows)
+
+        summary["trace_quality"] = trace_quality
+        summary["results_path"] = str(result_path)
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+
+        reports.append(
+            {
+                "task": task,
+                "split": split,
+                "provider": provider,
+                "model": model,
+                "status": "scored",
+                "n": trace_quality.get("n", len(rows)),
+                "rows_with_trace": trace_quality.get("rows_with_trace", 0),
+                "mean_trace_score": trace_quality.get("mean_trace_score"),
+                "fabricated_gene_mentions": trace_quality.get("fabricated_gene_mentions", 0),
+                "fabricated_allele_mentions": trace_quality.get("fabricated_allele_mentions", 0),
+                "invalid_mp_ids": trace_quality.get("invalid_mp_ids", 0),
+            }
+        )
+        mean_ts = trace_quality.get("mean_trace_score")
+        mean_text = _fmt(mean_ts) if mean_ts is not None else "  —  "
+        print(
+            f"Scored {task} | {provider}:{model} | "
+            f"trace_mean={mean_text} | traces={trace_quality.get('rows_with_trace', 0)}/{trace_quality.get('n', len(rows))}"
+        )
+    return reports
+
+
+def _trace_quality_complete(trace_quality: dict | None) -> bool:
+    if not isinstance(trace_quality, dict):
+        return False
+    subscore_means = trace_quality.get("subscore_means")
+    if not isinstance(subscore_means, dict):
+        return False
+    return all(dim in subscore_means for dim in TRACE_DIMS)
+
+
+def _print_trace_batch_summary(reports: list[dict]) -> None:
+    if not reports:
+        print("No saved results matched the requested providers/models/tasks.")
+        return
+    print("\nReasoning-score batch summary")
+    print(f"  {'task':<12} {'model':<28} {'trace_mean':>10} {'trace_cov':>10} {'n':>6} {'status':>9}")
+    for report in reports:
+        model = str(report.get("model", ""))
+        if len(model) > 28:
+            model = model[:25] + "..."
+        n = int(report.get("n") or 0)
+        rows_with_trace = int(report.get("rows_with_trace") or 0)
+        cov = rows_with_trace / n if n else 0.0
+        print(
+            f"  {str(report.get('task', '')):<12} "
+            f"{model:<28} "
+            f"{_fmt(report.get('mean_trace_score')):>10} "
+            f"{cov:>9.1%} "
+            f"{n:>6} "
+            f"{str(report.get('status', '')):>9}"
+        )
+
+
 def plot_all_results(eval_dir: Path, out_path: Path, split: str) -> None:
     rows = _load_eval_records(eval_dir, split)
     if not rows:
@@ -350,6 +584,51 @@ def main() -> None:
         help="Show this many representative low- and high-scoring rows.",
     )
     ap.add_argument(
+        "--task",
+        choices=[*TASK_ORDER, "all"],
+        default="all",
+        help="Task to batch-score when --results is omitted.",
+    )
+    ap.add_argument(
+        "--provider",
+        choices=list(PROVIDER_CONFIGS),
+        default=None,
+        help="Single-provider batch scoring filter.",
+    )
+    ap.add_argument(
+        "--providers",
+        nargs="+",
+        choices=[*list(PROVIDER_CONFIGS), "all"],
+        default=None,
+        help="Batch-score saved results for these providers. Default: all.",
+    )
+    ap.add_argument(
+        "--model",
+        default=None,
+        help="Single model filter for one provider.",
+    )
+    ap.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        metavar="PROVIDER:MODEL",
+        help=(
+            "Batch-score explicit models, e.g. openai:gpt-5.5 claude:claude-sonnet-4-6. "
+            "Bare model names require exactly one selected provider."
+        ),
+    )
+    ap.add_argument(
+        "--thinking",
+        choices=["think", "nothink", "all"],
+        default="think",
+        help="Which saved runs to score in batch mode. Default: think.",
+    )
+    ap.add_argument(
+        "--rerun",
+        action="store_true",
+        help="Re-score even when trace_quality is already present in the summary JSON.",
+    )
+    ap.add_argument(
         "--plot-all",
         action="store_true",
         help="Write one bar graph comparing all saved evaluate.py outputs.",
@@ -381,7 +660,24 @@ def main() -> None:
         return
 
     if not args.results:
-        ap.error("--results is required unless --plot-all is used.")
+        if args.out:
+            ap.error("--out is only supported with --results.")
+        if args.provider and args.providers:
+            ap.error("Use either --provider or --providers, not both.")
+        if args.provider:
+            args.providers = [args.provider]
+        provider_filter, model_filters = _parse_model_filters(args, ap)
+        targets = _load_trace_targets(
+            eval_dir=Path(args.eval_dir),
+            task=args.task,
+            split=args.split,
+            thinking=args.thinking,
+            provider_filter=provider_filter,
+            model_filters=model_filters,
+        )
+        reports = _score_trace_targets(targets, rerun=args.rerun)
+        _print_trace_batch_summary(reports)
+        return
 
     results_path = Path(args.results)
     if not results_path.exists():
@@ -407,9 +703,7 @@ def main() -> None:
     # ── per-dimension stats ──────────────────────────────────────────────
     print("\n── Sub-score coverage and mean ─────────────────────────────")
     print(f"  {'dimension':<22}  {'coverage':>9}  {'mean(present)':>15}")
-    dims = ["gene_validity", "allele_validity", "mp_validity",
-            "answer_consistency", "prompt_grounding",
-            "knowledge_extension", "pathway_consistency"]
+    dims = TRACE_DIMS
     coverage_stats: dict[str, list] = {d: [] for d in dims}
     for s in scored:
         for d in dims:

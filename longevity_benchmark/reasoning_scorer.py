@@ -439,14 +439,179 @@ def score_prompt_grounding(
     return grounded / total, {"n": total, "grounded": grounded}
 
 
+# ── pathway knowledge base ──────────────────────────────────────────────────
+# Maps MGI marker symbol → list of keyword groups (case-insensitive).
+# Each group is a list of synonyms; at least one word from a group must appear
+# in the trace for that group to count as matched.
+# score_pathway_consistency = groups_matched / total_groups.
+GENE_PATHWAY_KEYWORDS: dict[str, list[list[str]]] = {
+    # Insulin / IGF-1 signalling
+    "Igf1":    [["igf", "igf-1", "insulin-like growth factor"], ["growth factor", "somatomedin"]],
+    "Igf1r":   [["igf", "igf-1", "igf1r", "insulin-like growth factor"], ["receptor", "tyrosine kinase"], ["pi3k", "akt", "irs"]],
+    "Insr":    [["insulin receptor", "insr"], ["tyrosine kinase"], ["pi3k", "akt", "irs"]],
+    "Irs1":    [["insulin receptor substrate", "irs1", "irs-1"], ["pi3k", "akt"]],
+    "Irs2":    [["insulin receptor substrate", "irs2", "irs-2"], ["pi3k", "akt"]],
+    "Foxo1":   [["foxo", "forkhead", "fox"], ["transcription factor"], ["insulin", "igf", "akt"]],
+    "Foxo3":   [["foxo", "forkhead", "fox"], ["transcription factor"], ["insulin", "igf", "akt"]],
+    "Foxo4":   [["foxo", "forkhead", "fox"], ["transcription factor"], ["insulin", "igf"]],
+    "Pten":    [["pten", "phosphatase", "phosphoinositide"], ["pi3k", "akt", "pip3"], ["tumor suppressor"]],
+    # mTOR signalling
+    "Mtor":    [["mtor", "mechanistic target of rapamycin", "mammalian target"], ["rapamycin", "rapalog"], ["s6k", "4ebp", "autophagy"]],
+    "Rptor":   [["raptor", "rptor", "regulatory-associated protein"], ["mtorc1", "mtor complex 1"], ["s6k", "4ebp"]],
+    "Rictor":  [["rictor", "mtorc2", "rapamycin-insensitive companion"], ["akt", "sgk"], ["mtor complex 2"]],
+    "Rps6kb1": [["s6k", "s6 kinase", "p70s6k", "rps6kb1"], ["mtor", "tor"], ["ribosomal protein", "translation"]],
+    "Tsc1":    [["tsc", "tuberous sclerosis", "hamartin"], ["mtor", "rheb", "tor"], ["gtp", "ras-like"]],
+    "Tsc2":    [["tsc", "tuberous sclerosis", "tuberin"], ["mtor", "rheb", "tor"], ["gtp", "ras-like"]],
+    # Sirtuins / NAD+
+    "Sirt1":   [["sirt1", "sirtuin", "sirt"], ["nad", "nad+", "deacetylase", "deacetylation"], ["caloric restriction", "calorie restriction", "energy sensing"]],
+    "Sirt3":   [["sirt3", "sirtuin", "sirt"], ["nad", "nad+", "deacetylase"], ["mitochondr"]],
+    "Sirt6":   [["sirt6", "sirtuin", "sirt"], ["nad", "nad+", "deacetylase"], ["igf", "dna repair", "telomere"]],
+    "Nampt":   [["nampt", "nicotinamide phosphoribosyltransferase", "visfatin"], ["nad", "nad+", "biosynthesis"], ["sirt", "sirtuin"]],
+    # Growth hormone axis
+    "Gh":      [["growth hormone", "somatotropin", " gh "], ["igf", "igf-1", "liver"], ["dwarf", "pituitary"]],
+    "Ghr":     [["growth hormone receptor", "ghr"], ["jak", "stat", "stat5"], ["igf", "laron", "dwarfism"]],
+    "Ghrhr":   [["growth hormone releasing hormone", "ghrh receptor", "ghrhr"], ["pituitary", "somatotroph"], ["dwarf", "little mouse"]],
+    "Pou1f1":  [["pit1", "pou1f1", "pituitary-specific"], ["growth hormone", "prolactin", "tsh"], ["transcription factor", "dwarf", "snell"]],
+    "Prop1":   [["prop1", "ames dwarf", "prophet of pit1"], ["pituitary", "somatotroph"], ["growth hormone", "igf"]],
+    # DNA repair
+    "Ercc1":   [["ercc1", "nucleotide excision repair", "ner"], ["dna damage", "dna repair", "xeroderma"], ["progeroid", "premature aging", "crosslink"]],
+    "Ercc2":   [["ercc2", "xpd", "nucleotide excision repair"], ["dna damage", "dna repair", "helicase"], ["tfiih", "transcription factor iih"]],
+    "Ercc6":   [["ercc6", "csb", "cockayne", "transcription-coupled repair"], ["dna repair", "ner", "rna polymerase"], ["helicase"]],
+    "Xpa":     [["xpa", "xeroderma pigmentosum a", "ner"], ["dna damage", "dna repair", "nucleotide excision"], ["uv", "damage recognition"]],
+    "Xpc":     [["xpc", "xeroderma pigmentosum c", "ner"], ["dna damage", "dna repair", "nucleotide excision"], ["uv", "global genome"]],
+    "Wrn":     [["wrn", "werner", "helicase", "exonuclease"], ["dna repair", "progeroid", "premature aging"], ["replication fork", "double strand break", "recq"]],
+    "Blm":     [["blm", "bloom syndrome", "helicase", "recq"], ["dna repair", "homologous recombination"], ["sister chromatid exchange"]],
+    "Trp53":   [["p53", "trp53", "tumor protein"], ["apoptosis", "cell cycle arrest", "dna damage response"], ["tumor suppressor", "mdm2"]],
+    "Atm":     [["atm", "ataxia telangiectasia mutated"], ["dna damage", "double strand break", "kinase"], ["chk2", "p53", "h2ax"]],
+    # Telomere maintenance
+    "Tert":    [["tert", "telomerase reverse transcriptase"], ["telomere", "chromosome end", "shortening", "erosion"], ["replicative senescence"]],
+    "Terc":    [["terc", "telomerase rna", "tr", "telomerase rna component"], ["telomere", "chromosome end", "shortening"]],
+    # Autophagy
+    "Atg5":    [["atg5", "autophagy", "autophagosome"], ["lysosome", "degradation", "ubiquitin"]],
+    "Atg7":    [["atg7", "autophagy", "autophagosome", "e1-like"], ["lysosome", "degradation", "lipidation"]],
+    "Becn1":   [["beclin", "becn1", "autophagy", "beclin-1"], ["vps34", "pi3k", "lysosome", "atg14"]],
+    # Mitochondria / oxidative phosphorylation
+    "Coq7":    [["coq7", "coenzyme q", "ubiquinone", "clk-1"], ["mitochondr", "electron transport chain", "complex iii"]],
+    "Surf1":   [["surf1", "complex iv", "cytochrome c oxidase", "cox assembly"], ["mitochondr", "electron transport"]],
+    "Sod1":    [["sod1", "superoxide dismutase", "cu/zn", "copper zinc"], ["reactive oxygen species", "ros", "oxidative stress", "superoxide"]],
+    "Sod2":    [["sod2", "superoxide dismutase", "manganese", "mnsod"], ["reactive oxygen species", "ros", "mitochondr", "oxidative stress"]],
+    "Cat":     [["catalase", "peroxisome", "hydrogen peroxide", "h2o2"], ["oxidative stress", "ros", "antioxidant"]],
+    # AMPK
+    "Prkaa2":  [["ampk", "amp-activated", "prkaa", "alpha subunit"], ["energy sensing", "lkb1", "stk11"], ["glucose", "fatty acid", "atpamp"]],
+    "Stk11":   [["lkb1", "stk11", "ampk"], ["energy sensing", "tumor suppressor"], ["peutz-jeghers", "serine/threonine kinase"]],
+    # Nrf2 / oxidative stress response
+    "Nfe2l2":  [["nrf2", "nfe2l2", "antioxidant response element", "are"], ["keap1", "oxidative stress", "electrophile"], ["phase ii", "glutathione", "heme oxygenase"]],
+    "Keap1":   [["keap1", "nrf2", "cullin 3", "ubiquitin ligase"], ["oxidative stress", "antioxidant response element"], ["e3 ligase", "sensor"]],
+    # Proteostasis / heat shock
+    "Hsf1":    [["hsf1", "heat shock factor", "heat shock response"], ["chaperone", "hsp70", "hsp90", "hsp"], ["proteostasis", "unfolded protein response", "protein folding"]],
+    # Cell cycle / senescence
+    "Cdkn2a":  [["p16", "p19", "arf", "ink4a", "cdkn2a"], ["senescence", "cell cycle arrest", "retinoblastoma", "rb"], ["cyclin dependent kinase", "cyclin-dependent kinase"]],
+    "Rb1":     [["rb", "rb1", "retinoblastoma protein"], ["e2f", "cell cycle", "g1 phase"], ["cdkn2a", "p16", "cyclin d"]],
+}
+
+
+def score_knowledge_extension(
+    trace: str,
+    metadata: dict | str | None,
+    gene_db: set[str],
+    mp_db: dict[str, str],
+) -> tuple[float | None, dict]:
+    """Fraction of valid gene/MP citations in the trace that extend beyond the
+    gold gene and gold MP terms already present in the prompt.
+
+    High score means the model draws on external biological knowledge.
+    Low score (with high prompt_grounding) means the model only echoes the prompt.
+    """
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    metadata = metadata or {}
+
+    if not trace.strip():
+        return None, {"reason": "empty_trace"}
+
+    gold_gene = (metadata.get("gene") or "").lower()
+    gold_mp_terms = {t.upper() for t in (metadata.get("gold_mp_terms") or [])}
+
+    gene_db_lc = {g.lower() for g in gene_db}
+
+    gene_mentions = extract_gene_mentions(trace)
+    valid_genes = [g for g in gene_mentions if g.lower() in gene_db_lc]
+    novel_genes = [g for g in valid_genes if g.lower() != gold_gene]
+
+    mp_pairs = extract_mp_terms(trace)
+    valid_mp = [mp_id for mp_id, _ in mp_pairs if mp_id.upper() in mp_db]
+    novel_mp = [mp_id for mp_id in valid_mp if mp_id.upper() not in gold_mp_terms]
+
+    total_valid = len(valid_genes) + len(valid_mp)
+    total_novel = len(novel_genes) + len(novel_mp)
+
+    if total_valid == 0:
+        return None, {"n_valid": 0, "reason": "no_valid_entity_citations"}
+
+    return total_novel / total_valid, {
+        "n_valid": total_valid,
+        "n_novel": total_novel,
+        "novel_genes": novel_genes[:10],
+        "novel_mp_ids": novel_mp[:10],
+    }
+
+
+def score_pathway_consistency(
+    trace: str,
+    metadata: dict | str | None,
+) -> tuple[float | None, dict]:
+    """Fraction of expected biological keyword groups matched in the trace.
+
+    Each gene in GENE_PATHWAY_KEYWORDS has associated keyword groups.
+    A group is matched if at least one of its synonym keywords appears in the trace.
+    Score = groups_matched / total_groups.
+    Returns None when the gold gene is not in GENE_PATHWAY_KEYWORDS.
+    """
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    metadata = metadata or {}
+
+    gene = (metadata.get("gene") or "").strip()
+    keyword_groups = GENE_PATHWAY_KEYWORDS.get(gene)
+    if not keyword_groups:
+        return None, {"reason": f"gene_not_in_pathway_db", "gene": gene}
+
+    if not trace.strip():
+        return 0.0, {"gene": gene, "reason": "empty_trace"}
+
+    trace_lower = trace.lower()
+    groups_matched = 0
+    group_details = []
+    for group in keyword_groups:
+        matched_kw = next((kw for kw in group if kw.lower() in trace_lower), None)
+        if matched_kw:
+            groups_matched += 1
+        group_details.append({"keywords": group, "matched": matched_kw})
+
+    return groups_matched / len(keyword_groups), {
+        "gene": gene,
+        "n_groups": len(keyword_groups),
+        "groups_matched": groups_matched,
+        "details": group_details,
+    }
+
+
 # ── aggregate ───────────────────────────────────────────────────────────────
 
 WEIGHTS = {
-    "allele_validity":    0.20,
-    "gene_validity":      0.25,
-    "mp_validity":        0.20,
-    "answer_consistency": 0.20,
-    "prompt_grounding":   0.15,
+    "allele_validity":      0.10,
+    "gene_validity":        0.20,
+    "mp_validity":          0.15,
+    "answer_consistency":   0.20,
+    "prompt_grounding":     0.10,
+    "knowledge_extension":  0.15,
+    "pathway_consistency":  0.10,
 }
 
 
@@ -485,11 +650,15 @@ def score_one(
     # The prompt_text is not stored on the result; pass via metadata.row_text if available.
     prompt_text = result.get("prompt_text") or ""
 
+    metadata = result.get("metadata")
+
     g_score, g_det = score_gene_validity(trace, gene_db)
     a_score, a_det = score_allele_validity(trace, allele_db)
     m_score, m_det = score_mp_validity(trace, mp_db)
     c_score, c_det = score_answer_consistency(trace, answer, task)
-    p_score, p_det = score_prompt_grounding(trace, prompt_text, result.get("metadata"))
+    p_score, p_det = score_prompt_grounding(trace, prompt_text, metadata)
+    ke_score, ke_det = score_knowledge_extension(trace, metadata, gene_db, mp_db)
+    pc_score, pc_det = score_pathway_consistency(trace, metadata)
 
     subscores = {
         "gene_validity":      g_score,
@@ -497,6 +666,8 @@ def score_one(
         "mp_validity":        m_score,
         "answer_consistency": c_score,
         "prompt_grounding":   p_score,
+        "knowledge_extension": ke_score,
+        "pathway_consistency": pc_score,
     }
     weighted_sum = 0.0
     weight_total = 0.0
@@ -516,12 +687,14 @@ def score_one(
         aggregate=aggregate,
         subscores=subscores,
         details={
-            "gene_validity":      g_det,
-            "allele_validity":    a_det,
-            "mp_validity":        m_det,
-            "answer_consistency": c_det,
-            "prompt_grounding":   p_det,
-            "trace_len_chars":    len(trace),
+            "gene_validity":       g_det,
+            "allele_validity":     a_det,
+            "mp_validity":         m_det,
+            "answer_consistency":  c_det,
+            "prompt_grounding":    p_det,
+            "knowledge_extension": ke_det,
+            "pathway_consistency": pc_det,
+            "trace_len_chars":     len(trace),
         },
     )
 
@@ -573,6 +746,7 @@ def annotate_results_inplace(
     subscore_vals: dict[str, list[float]] = {
         "gene_validity": [], "allele_validity": [], "mp_validity": [],
         "answer_consistency": [], "prompt_grounding": [],
+        "knowledge_extension": [], "pathway_consistency": [],
     }
     n_invalid_gene = n_invalid_allele = n_invalid_mp = 0
 

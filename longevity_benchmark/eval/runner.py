@@ -178,9 +178,26 @@ def make_client(provider: str, model: str | None = None, endpoint: str | None = 
     return client, resolved_model
 
 
+def _with_visible_reasoning_request(messages: list[dict]) -> list[dict]:
+    """Ask providers without native trace support to emit a scorable rationale."""
+    augmented = [dict(message) for message in messages]
+    instruction = (
+        "\n\nFor this reasoning-scored run, override the final-answer-only output "
+        "format with exactly two parts:\n"
+        "<think>Brief evidence-grounded biological rationale. Mention the gene, "
+        "allele/strain, relevant phenotype or pathway evidence, and why it supports "
+        "the final answer.</think>\n"
+        "Then output only the final answer in the exact format requested above."
+    )
+    augmented[-1]["content"] = str(augmented[-1].get("content", "")) + instruction
+    return augmented
+
+
 def call_model(row: dict, client, model: str, provider: str, enable_thinking: bool) -> dict:
     """Send one row to the model and return a scored result dict."""
     messages = row["messages"][:-1]
+    if enable_thinking and provider != "longevity":
+        messages = _with_visible_reasoning_request(messages)
     gold = row["messages"][-1]["content"].strip()
     fmt = row["format"]
     parser_key = row.get("parser", fmt)
@@ -188,9 +205,12 @@ def call_model(row: dict, client, model: str, provider: str, enable_thinking: bo
     if parser is None:
         raise ValueError(f"No parser registered for format/parser: {fmt}/{parser_key}")
 
-    # Thinking is only meaningful for longevity and claude providers.
-    thinking_active = enable_thinking and provider in ("longevity", "claude")
+    # Longevity has provider-native thinking support. Other providers get a
+    # visible <think>...</think> rationale prompt above so the scorer can read it.
+    thinking_active = enable_thinking and provider == "longevity"
     if thinking_active:
+        max_tokens = 2000
+    elif enable_thinking:
         max_tokens = 2000
     elif provider == "openai":
         # OpenAI reasoning models count hidden reasoning tokens against the
@@ -226,15 +246,6 @@ def call_model(row: dict, client, model: str, provider: str, enable_thinking: bo
                 "google": {"thinking_config": {"thinking_budget": 0}}
             }
         }
-    elif provider == "claude" and enable_thinking:
-        # Claude extended thinking via OpenAI-compatible endpoint.
-        create_kwargs["extra_body"] = {
-            "thinking": {"type": "enabled", "budget_tokens": 1600}
-        }
-        create_kwargs["extra_headers"] = {
-            "anthropic-beta": "interleaved-thinking-2025-05-14"
-        }
-
     start = time.time()
     response = client.chat.completions.create(**create_kwargs)
     elapsed = time.time() - start
@@ -242,8 +253,8 @@ def call_model(row: dict, client, model: str, provider: str, enable_thinking: bo
     raw = response.choices[0].message.content or ""
     think, answer = strip_think(raw)
 
-    # Claude extended thinking puts the trace in reasoning_content when the
-    # endpoint uses a reasoning parser; fall back to the <think> block otherwise.
+    # Some OpenAI-compatible endpoints may expose provider reasoning separately;
+    # prefer it if present, otherwise use the visible <think> block.
     if provider == "claude" and enable_thinking:
         reasoning = getattr(response.choices[0].message, "reasoning_content", None)
         if reasoning:
@@ -368,8 +379,33 @@ def parse_float(value: str) -> float | None:
         return None
 
 
+def _round_metric(value: float, digits: int = 4) -> float | None:
+    return round(value, digits) if value == value else None
+
+
 def report_metrics(results: list[dict], task: str) -> tuple[float, str, float]:
     """Print per-class breakdown and return score, metric name, baseline."""
+    if not results:
+        metric_by_task = {
+            "pairwise": "accuracy",
+            "mcq": "accuracy",
+            "set": "mean_set_f1",
+            "regression": "mae_days",
+        }
+        metric = metric_by_task.get(task, "balanced_accuracy")
+        baseline_by_task = {
+            "pairwise": 0.5,
+            "mcq": 0.25,
+            "set": 0.0,
+            "regression": 0.0,
+        }
+        baseline = baseline_by_task.get(task, float("nan"))
+        print(f"\n{'=' * 50}")
+        print(f"Task: {task}  |  n=0")
+        print("No successful model responses; metric is unavailable.")
+        print(f"{'=' * 50}")
+        return float("nan"), metric, baseline
+
     preds = [result["pred"] for result in results]
     golds = [result["gold"] for result in results]
 
@@ -463,6 +499,24 @@ def evaluate_task(
     if skip_existing:
         existing = _existing_complete_summary(summary_path, log_path, len(rows))
         if existing is not None:
+            if score_traces and enable_thinking and existing.get("trace_quality") is None:
+                from ..reasoning_scorer import annotate_results_inplace
+                saved_results = load_jsonl(log_path)
+                trace_summary = annotate_results_inplace(saved_results)
+                with open(log_path, "w", encoding="utf-8") as log_file:
+                    for result in saved_results:
+                        log_file.write(json.dumps(result, ensure_ascii=False) + "\n")
+                existing["trace_quality"] = trace_summary
+                existing["results_path"] = str(log_path)
+                with open(summary_path, "w", encoding="utf-8") as summary_file:
+                    json.dump(existing, summary_file, indent=2)
+                existing["status"] = "scored_existing"
+                existing["summary_path"] = str(summary_path)
+                print(
+                    f"Scored existing traces for {task} | split={split} | "
+                    f"provider={provider} | model={model} -> {summary_path}"
+                )
+                return existing
             existing["status"] = "skipped"
             existing["results_path"] = str(log_path)
             existing["summary_path"] = str(summary_path)
@@ -492,9 +546,9 @@ def evaluate_task(
         "model": model,
         "thinking": enable_thinking,
         "n": len(results),
-        "score": round(score, 4),
+        "score": _round_metric(score),
         "metric": metric,
-        "baseline": round(baseline, 4),
+        "baseline": _round_metric(baseline),
         "results_path": str(log_path),
     }
 

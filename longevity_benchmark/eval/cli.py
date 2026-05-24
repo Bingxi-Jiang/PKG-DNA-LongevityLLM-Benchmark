@@ -104,7 +104,14 @@ def main() -> None:
         default="all",
     )
     parser.add_argument("--split", choices=["train", "test"], default="test")
-    parser.add_argument("--think", action="store_true", help="Enable chain-of-thought thinking (longevity and claude providers only).")
+    parser.add_argument(
+        "--think",
+        action="store_true",
+        help=(
+            "Emit a scorable reasoning trace. Longevity uses native thinking; "
+            "other providers are prompted to produce a visible <think>...</think> rationale."
+        ),
+    )
     parser.add_argument(
         "--score-traces", action="store_true",
         help="After evaluation, score each reasoning trace against MGI/MP databases "

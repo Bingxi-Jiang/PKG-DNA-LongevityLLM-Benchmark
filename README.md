@@ -382,9 +382,9 @@ python evaluate.py --provider claude --model claude-opus-4-7 --think --task mcq
 Task aliases accepted by `--task` are `effect`, `mcq`, `ternary`, `set`,
 `pairwise`, `regression`, `sex_effect`, and `all`.
 
-Thinking (`--think`) is supported for `longevity` (via `chat_template_kwargs`)
-and `claude` (via Anthropic extended thinking). It is a no-op for `gemini`
-and `openai`.
+Thinking (`--think`) emits a scorable reasoning trace for every provider.
+`longevity` uses `chat_template_kwargs`; other providers are prompted to put a
+brief biological rationale inside `<think>...</think>` before the final answer.
 
 Useful options:
 
@@ -452,11 +452,11 @@ needed.
 
 ## Reasoning Trace Scoring
 
-When `--think` is enabled, the model emits a chain-of-thought trace before
-its answer. `reasoning_scorer` evaluates the trace's biological correctness
-against the actual MGI/MP ontology databases — no LLM-in-the-loop required.
+When `--think` is enabled, the model emits a reasoning trace before its answer.
+`reasoning_scorer` evaluates the trace's biological correctness against the
+actual MGI/MP ontology databases — no LLM-in-the-loop required.
 
-Five sub-scores per trace (each in `[0, 1]`):
+Seven sub-scores per trace (each in `[0, 1]`):
 
 | Sub-score | What it checks | Source of truth |
 | --- | --- | --- |
@@ -465,6 +465,8 @@ Five sub-scores per trace (each in `[0, 1]`):
 | `mp_validity` | Cited `MP:NNNNNNN` IDs exist and their claimed names match the ontology (Jaccard ≥ 0.4) | `VOC_MammalianPhenotype.rpt` (~15k terms) |
 | `answer_consistency` | Directional language at the end of the trace aligns with the final classification answer | Built-in direction vocab |
 | `prompt_grounding` | Entities cited in the trace (gene/allele/strain) appear in the prompt's metadata, not in unrelated biology | Row metadata |
+| `knowledge_extension` | Valid gene/MP citations go beyond simply echoing the gold prompt entities | MGI marker and MP ontology databases |
+| `pathway_consistency` | Gene-specific pathway keywords match expected longevity biology when the gene is covered | Built-in longevity pathway keyword map |
 
 The aggregate is a weighted mean of present sub-scores (missing dimensions
 are excluded rather than scored 0, so a trace with no MP-term mentions is
@@ -485,11 +487,23 @@ with the global mean and hallucination counts.
 
 ### Multi-model trace scoring
 
-`evaluate.py --think --score-traces` scores traces for every selected
-provider/model that emits them:
+You can score reasoning traces during evaluation:
 
 ```bash
 python evaluate.py --task ternary --providers longevity claude --think --score-traces --limit 30
+```
+
+You can also score already-saved thinking runs for every saved provider/model
+without making new API calls:
+
+```bash
+python score_traces.py --providers all --task all --split test
+```
+
+Or target explicit saved models:
+
+```bash
+python score_traces.py --models openai:gpt-5.5 claude:claude-sonnet-4-6 --task ternary
 ```
 
 ```text
@@ -497,8 +511,10 @@ python evaluate.py --task ternary --providers longevity claude --think --score-t
   Trace quality: mean=0.867  fabricated_genes=0  fabricated_alleles=0  invalid_mp_ids=0
 ```
 
+The per-row `results_*.jsonl` receives `trace_score` and `trace_subscores`.
 The summary JSON for each model receives a `trace_quality` block with the same
-aggregate values.
+aggregate values. Existing scored summaries are skipped by default; add
+`--rerun` to recompute trace scores.
 
 ### Standalone scoring (for already-saved results)
 
