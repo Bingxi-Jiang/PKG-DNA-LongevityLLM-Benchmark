@@ -35,7 +35,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# ── DB loaders ──────────────────────────────────────────────────────────────
+# DB loaders
 
 _GENE_DB: set[str] | None = None
 _GENE_DB_CI: set[str] | None = None  # case-insensitive lookup
@@ -112,7 +112,7 @@ def load_strain_db(path: str | Path = "data/mpd/Yuan2_strainmeans.csv") -> set[s
     return strains
 
 
-# ── extractors ──────────────────────────────────────────────────────────────
+# extractors
 
 # Gene-context patterns: words that strongly imply the adjacent token is a gene symbol.
 _GENE_BEFORE = re.compile(
@@ -272,7 +272,7 @@ def extract_allele_notation(trace: str) -> list[str]:
     return [m.group(0) for m in pat.finditer(trace)]
 
 
-# ── per-dimension scoring ───────────────────────────────────────────────────
+# per-dimension scoring
 
 def _safe_ratio(num: int, den: int) -> float:
     return num / den if den else float("nan")
@@ -439,7 +439,7 @@ def score_prompt_grounding(
     return grounded / total, {"n": total, "grounded": grounded}
 
 
-# ── aggregate ───────────────────────────────────────────────────────────────
+# aggregate
 
 WEIGHTS = {
     "allele_validity":    0.20,
