@@ -121,7 +121,14 @@ def call_model(row: dict, client, model: str, provider: str, enable_thinking: bo
 
     # Thinking is only meaningful for longevity and claude providers.
     thinking_active = enable_thinking and provider in ("longevity", "claude")
-    max_tokens = 2000 if thinking_active else 200
+    if thinking_active:
+        max_tokens = 2000
+    elif provider == "gemini":
+        # Gemini 2.x+ runs server-side reasoning that consumes the output
+        # budget before any visible text; 200 tokens truncates mid-thought.
+        max_tokens = 2000
+    else:
+        max_tokens = 200
 
     create_kwargs: dict = dict(
         model=model,
@@ -133,6 +140,12 @@ def call_model(row: dict, client, model: str, provider: str, enable_thinking: bo
     if provider == "longevity":
         create_kwargs["extra_body"] = {
             "chat_template_kwargs": {"enable_thinking": enable_thinking}
+        }
+    elif provider == "gemini":
+        create_kwargs["extra_body"] = {
+            "extra_body": {
+                "google": {"thinking_config": {"thinking_budget": 0}}
+            }
         }
     elif provider == "claude" and enable_thinking:
         # Claude extended thinking via OpenAI-compatible endpoint.
