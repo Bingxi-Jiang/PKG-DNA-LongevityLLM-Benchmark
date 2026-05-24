@@ -104,15 +104,20 @@ or an inconclusive lifespan-related annotation.
 | --- | --- |
 | Format | Ternary classification |
 | Metric | Balanced accuracy |
-| Train | 33 prompts |
-| Test | 33 prompts |
-| Train labels | 11 Increased, 11 Decreased, 11 Inconclusive |
-| Test labels | 11 Increased, 11 Decreased, 11 Inconclusive |
+| Train | 59 prompts |
+| Test | 62 prompts |
+| Train labels | 11 Increased, 32 Decreased, 16 Inconclusive |
+| Test labels | 11 Increased, 34 Decreased, 17 Inconclusive |
 
 Inconclusive rows come only from MGI annotations that are explicitly
 lifespan/aging-related but not a single strict direction: broad terms such as
 `MP:0010768` mortality/aging and `MP:0010769` abnormal survival, plus genotype
 rows with conflicting strict directional labels.
+
+The split keeps every Increased and Inconclusive row (both rare classes) and
+downsamples Decreased to twice the larger of the two. Balanced accuracy
+handles the residual class imbalance, while keeping each split above the
+50-prompt minimum.
 
 ### LB-MGI-005: Directional MP Term Set
 
@@ -186,7 +191,8 @@ effect gene overlap: 0
 leaky context hits: 0 / 1547 prompts
 pairwise train bad_split: 0, labels: A=250, B=250
 pairwise test bad_split: 0, labels: A=150, B=150
-ternary train/test labels: 11 Increased, 11 Decreased, 11 Inconclusive
+ternary train: 11 Increased, 32 Decreased, 16 Inconclusive
+ternary test:  11 Increased, 34 Decreased, 17 Inconclusive
 MPD regression train/test: 41 / 18
 MPD sex-effect test labels: 7 No significant difference, 1 Female longer, 1 Male longer
 ```

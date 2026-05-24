@@ -30,24 +30,30 @@ def assign_gene_splits(
     config: BuildConfig,
     rng: random.Random,
 ) -> pd.DataFrame:
-    inc_df = df[df["label"] == "Increased"]
-    inc_gene_counts = inc_df.groupby("marker_symbol").size().to_dict()
-    inc_genes = sorted(inc_gene_counts)
-    other_genes = sorted(set(df["marker_symbol"]) - set(inc_genes))
+    rare_labels = [
+        label for label in ("Increased", "Inconclusive") if label in set(df["label"].unique())
+    ]
 
+    rare_train_genes: set[str] = set()
+    rare_genes_all: set[str] = set()
+    for label in rare_labels:
+        label_df = df[df["label"] == label]
+        gene_counts = label_df.groupby("marker_symbol").size().to_dict()
+        candidate_counts = {
+            gene: count for gene, count in gene_counts.items() if gene not in rare_genes_all
+        }
+        target_rows = max(1, int(round(len(label_df) * config.rare_label_train_fraction)))
+        train_subset = choose_genes_for_target_rows(candidate_counts, target_rows)
+        rare_train_genes |= train_subset
+        rare_genes_all |= set(gene_counts)
+
+    other_genes = sorted(set(df["marker_symbol"]) - rare_genes_all)
     rng.shuffle(other_genes)
-
-    target_inc_train_rows = max(
-        1,
-        int(round(len(inc_df) * config.rare_label_train_fraction)),
-    )
-    inc_train_genes = choose_genes_for_target_rows(inc_gene_counts, target_inc_train_rows)
-
     n_other_train = max(1, int(len(other_genes) * config.train_fraction))
     if len(other_genes) > 1:
         n_other_train = min(n_other_train, len(other_genes) - 1)
 
-    train_genes = inc_train_genes | set(other_genes[:n_other_train])
+    train_genes = rare_train_genes | set(other_genes[:n_other_train])
 
     out = df.copy()
     out["split"] = out["marker_symbol"].apply(
@@ -86,7 +92,12 @@ def balance_decreased_within_split(df: pd.DataFrame, config: BuildConfig) -> pd.
 
 
 def balance_ternary_within_split(df: pd.DataFrame, config: BuildConfig) -> pd.DataFrame:
-    """Balance Increased/Decreased/Inconclusive labels inside each split."""
+    """Keep all Increased and Inconclusive rows; downsample Decreased to a comparable level.
+
+    Equal-class balancing would cap each split at the size of the rarest class (~11),
+    which leaves the task below the 50-prompt minimum. balanced_accuracy already handles
+    class imbalance, so we keep every rare-class row and trim only the majority class.
+    """
     labels = ["Increased", "Decreased", "Inconclusive"]
     kept = []
     for split, split_df in df.groupby("split"):
@@ -95,11 +106,16 @@ def balance_ternary_within_split(df: pd.DataFrame, config: BuildConfig) -> pd.Da
         if missing:
             raise ValueError(f"Cannot build ternary split {split}; missing labels: {missing}")
 
-        target = min(counts[label] for label in labels)
+        rare_max = max(counts["Increased"], counts["Inconclusive"])
+        target_dec = min(counts["Decreased"], rare_max * config.ternary_majority_multiplier)
+
         split_parts = []
         for label in labels:
             label_df = split_df[split_df["label"] == label]
-            split_parts.append(label_df.sample(n=target, random_state=config.seed))
+            if label == "Decreased":
+                split_parts.append(label_df.sample(n=target_dec, random_state=config.seed))
+            else:
+                split_parts.append(label_df)
         kept.append(pd.concat(split_parts, ignore_index=True))
 
     out = pd.concat(kept, ignore_index=True)

@@ -34,6 +34,7 @@ class BuildConfig:
     seed: int = 42
     negative_to_positive_ratio: int = 8
     min_decreased_per_split: int = 50
+    ternary_majority_multiplier: int = 2
     max_pairwise_train: int = 500
     max_pairwise_test: int = 300
     train_fraction: float = 0.7
