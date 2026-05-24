@@ -22,7 +22,25 @@ from .parsing import PARSERS, strip_think
 
 
 DEFAULT_ENDPOINT = "https://swchnq0ekc3scmqw.us-east-2.aws.endpoints.huggingface.cloud/v1"
-MODEL = "longevity-llm"
+
+PROVIDER_CONFIGS: dict[str, dict] = {
+    "longevity": {
+        "endpoint": DEFAULT_ENDPOINT,
+        "default_model": "longevity-llm",
+        "api_key_env": "HF_TOKEN",
+    },
+    "gemini": {
+        "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "default_model": "gemini-2.0-flash",
+        "api_key_env": "GEMINI_API_KEY",
+    },
+    "claude": {
+        "endpoint": "https://api.anthropic.com/v1/",
+        "default_model": "claude-sonnet-4-6",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    },
+}
+
 WORKERS = 6  # Stay <= 8 per hackathon guidance.
 
 TASK_FILE_PREFIX = {
@@ -36,7 +54,8 @@ TASK_FILE_PREFIX = {
 }
 
 
-def make_client(endpoint: str):
+def make_client(provider: str, model: str | None = None, endpoint: str | None = None) -> tuple:
+    """Return (client, resolved_model_name) for the given provider."""
     try:
         import httpx
         from openai import OpenAI
@@ -45,17 +64,52 @@ def make_client(endpoint: str):
             "Install evaluation dependencies first: pip install openai httpx scikit-learn"
         ) from exc
 
-    hf_token = os.environ.get("HF_TOKEN")
-    if not hf_token:
-        raise RuntimeError("Set HF_TOKEN in your environment before running evaluation.")
-    return OpenAI(
-        base_url=endpoint,
-        api_key=hf_token,
-        http_client=httpx.Client(timeout=300),
-    )
+    if provider not in PROVIDER_CONFIGS:
+        raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(PROVIDER_CONFIGS)}")
+
+    cfg = PROVIDER_CONFIGS[provider]
+    resolved_model = model or cfg["default_model"]
+    resolved_endpoint = endpoint or cfg["endpoint"]
+
+    if provider == "longevity":
+        api_key = os.environ.get("HF_TOKEN")
+        if not api_key:
+            raise RuntimeError("Set HF_TOKEN in your environment before running evaluation.")
+        client = OpenAI(
+            base_url=resolved_endpoint,
+            api_key=api_key,
+            http_client=httpx.Client(timeout=300),
+        )
+
+    elif provider == "gemini":
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "Set GEMINI_API_KEY or GOOGLE_API_KEY in your environment before running evaluation."
+            )
+        client = OpenAI(
+            base_url=resolved_endpoint,
+            api_key=api_key,
+            http_client=httpx.Client(timeout=300),
+        )
+
+    else:  # claude
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "Set ANTHROPIC_API_KEY in your environment before running evaluation."
+            )
+        client = OpenAI(
+            base_url=resolved_endpoint,
+            api_key=api_key,
+            default_headers={"anthropic-version": "2023-06-01"},
+            http_client=httpx.Client(timeout=300),
+        )
+
+    return client, resolved_model
 
 
-def call_model(row: dict, client, enable_thinking: bool) -> dict:
+def call_model(row: dict, client, model: str, provider: str, enable_thinking: bool) -> dict:
     """Send one row to the model and return a scored result dict."""
     messages = row["messages"][:-1]
     gold = row["messages"][-1]["content"].strip()
@@ -65,23 +119,51 @@ def call_model(row: dict, client, enable_thinking: bool) -> dict:
     if parser is None:
         raise ValueError(f"No parser registered for format/parser: {fmt}/{parser_key}")
 
-    start = time.time()
-    response = client.chat.completions.create(
-        model=MODEL,
+    # Thinking is only meaningful for longevity and claude providers.
+    thinking_active = enable_thinking and provider in ("longevity", "claude")
+    max_tokens = 2000 if thinking_active else 200
+
+    create_kwargs: dict = dict(
+        model=model,
         messages=messages,
-        max_tokens=2000 if enable_thinking else 200,
+        max_tokens=max_tokens,
         temperature=0.0,
-        extra_body={"chat_template_kwargs": {"enable_thinking": enable_thinking}},
     )
+
+    if provider == "longevity":
+        create_kwargs["extra_body"] = {
+            "chat_template_kwargs": {"enable_thinking": enable_thinking}
+        }
+    elif provider == "claude" and enable_thinking:
+        # Claude extended thinking via OpenAI-compatible endpoint.
+        create_kwargs["extra_body"] = {
+            "thinking": {"type": "enabled", "budget_tokens": 1600}
+        }
+        create_kwargs["extra_headers"] = {
+            "anthropic-beta": "interleaved-thinking-2025-05-14"
+        }
+
+    start = time.time()
+    response = client.chat.completions.create(**create_kwargs)
     elapsed = time.time() - start
 
     raw = response.choices[0].message.content or ""
     think, answer = strip_think(raw)
+
+    # Claude extended thinking puts the trace in reasoning_content when the
+    # endpoint uses a reasoning parser; fall back to the <think> block otherwise.
+    if provider == "claude" and enable_thinking:
+        reasoning = getattr(response.choices[0].message, "reasoning_content", None)
+        if reasoning:
+            think = reasoning
+
     pred = parser(answer)
 
     return {
         "lb_id": row["lb_id"],
         "format": fmt,
+        "provider": provider,
+        "model": model,
         "gold": gold,
         "raw_response": raw,
         "think": think,
@@ -95,7 +177,14 @@ def call_model(row: dict, client, enable_thinking: bool) -> dict:
     }
 
 
-def run_eval(rows: list[dict], client, enable_thinking: bool, log_path: str | Path) -> list[dict]:
+def run_eval(
+    rows: list[dict],
+    client,
+    model: str,
+    provider: str,
+    enable_thinking: bool,
+    log_path: str | Path,
+) -> list[dict]:
     """Run rows concurrently, stream results to log_path, and return results."""
     results = []
     n_errors = 0
@@ -103,7 +192,8 @@ def run_eval(rows: list[dict], client, enable_thinking: bool, log_path: str | Pa
     with open(log_path, "w", encoding="utf-8") as log_file:
         with ThreadPoolExecutor(max_workers=WORKERS) as executor:
             futures = {
-                executor.submit(call_model, row, client, enable_thinking): row for row in rows
+                executor.submit(call_model, row, client, model, provider, enable_thinking): row
+                for row in rows
             }
             done = 0
             for future in as_completed(futures):
@@ -119,7 +209,12 @@ def run_eval(rows: list[dict], client, enable_thinking: bool, log_path: str | Pa
                     continue
                 correct = sum(r["correct"] for r in results)
                 acc = correct / len(results)
-                print(f"  [{done}/{len(rows)}]  acc={acc:.1%}  correct={correct}/{len(results)}  api_errors={n_errors}", end="\r", flush=True)
+                print(
+                    f"  [{done}/{len(rows)}]  acc={acc:.1%}  correct={correct}/{len(results)}"
+                    f"  api_errors={n_errors}",
+                    end="\r",
+                    flush=True,
+                )
 
     print()
     return results
@@ -218,6 +313,8 @@ def evaluate_task(
     input_dir: str,
     eval_dir: str,
     client,
+    model: str,
+    provider: str,
     enable_thinking: bool,
     limit: int | None,
 ) -> None:
@@ -230,26 +327,31 @@ def evaluate_task(
     if limit:
         rows = rows[:limit]
 
+    model_slug = model.replace("/", "-").replace(".", "-")
     think_tag = "think" if enable_thinking else "nothink"
-    log_path = Path(eval_dir) / f"results_{task}_{split}_{think_tag}.jsonl"
+    file_tag = f"{provider}_{model_slug}_{think_tag}"
+
+    log_path = Path(eval_dir) / f"results_{task}_{split}_{file_tag}.jsonl"
     print(f"\n{'=' * 50}")
-    print(f"Running {task} | split={split} | n={len(rows)} | thinking={enable_thinking}")
+    print(f"Running {task} | split={split} | provider={provider} | model={model} | n={len(rows)} | thinking={enable_thinking}")
     print(f"Logging -> {log_path}")
     print(f"{'=' * 50}")
 
-    results = run_eval(rows, client, enable_thinking, log_path)
+    results = run_eval(rows, client, model, provider, enable_thinking, log_path)
     score, metric, baseline = report_metrics(results, task)
 
     summary = {
         "task": task,
         "split": split,
+        "provider": provider,
+        "model": model,
         "thinking": enable_thinking,
         "n": len(results),
         "score": round(score, 4),
         "metric": metric,
         "baseline": round(baseline, 4),
     }
-    summary_path = Path(eval_dir) / f"summary_{task}_{split}_{think_tag}.json"
+    summary_path = Path(eval_dir) / f"summary_{task}_{split}_{file_tag}.json"
     with open(summary_path, "w", encoding="utf-8") as summary_file:
         json.dump(summary, summary_file, indent=2)
     print(f"Summary -> {summary_path}")

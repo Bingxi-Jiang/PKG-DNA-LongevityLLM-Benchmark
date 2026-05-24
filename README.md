@@ -299,29 +299,83 @@ output/mpd_sex_effect_train.jsonl
 output/mpd_sex_effect_test.jsonl
 ```
 
+Copy `.env.example` to `.env` and fill in the API keys for the providers you
+want to use:
+
+```bash
+cp .env.example .env
+# then edit .env
+```
+
 Run evaluation against the hosted Longevity-LLM endpoint:
 
 ```bash
-set HF_TOKEN=<your-token>
-python evaluate.py --task both --split test
+HF_TOKEN=<your-token> python evaluate.py --task all --split test
 ```
 
-`--task both` runs the original effect and pairwise tasks. Use `--task all` to
-run effect, MCQ, ternary, set-generation, pairwise, regression, and sex-effect
-tasks.
+Run against Google Gemini:
+
+```bash
+GEMINI_API_KEY=<your-key> python evaluate.py --provider gemini --task all --split test
+```
+
+Run against Anthropic Claude:
+
+```bash
+ANTHROPIC_API_KEY=<your-key> python evaluate.py --provider claude --task all --split test
+```
+
+To compare all three providers in parallel (separate terminals):
+
+```bash
+HF_TOKEN=...         python evaluate.py --provider longevity --eval-dir output/eval
+GEMINI_API_KEY=...   python evaluate.py --provider gemini    --eval-dir output/eval
+ANTHROPIC_API_KEY=... python evaluate.py --provider claude   --eval-dir output/eval
+```
+
+Results land in separate files per provider, e.g.
+`output/eval/results_effect_test_claude_claude-sonnet-4-6_nothink.jsonl`.
+
+## Model Providers
+
+| Provider flag | Default model | API key env var |
+| --- | --- | --- |
+| `longevity` (default) | `longevity-llm` | `HF_TOKEN` |
+| `gemini` | `gemini-2.0-flash` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
+| `claude` | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+
+Override the model with `--model <name>`, e.g.:
+
+```bash
+python evaluate.py --provider claude --model claude-opus-4-7 --think --task mcq
+```
+
+Thinking (`--think`) is supported for `longevity` (via `chat_template_kwargs`)
+and `claude` (via Anthropic extended thinking). It is a no-op for `gemini`.
 
 Useful options:
 
 ```bash
-python evaluate.py --task effect --limit 10
-python evaluate.py --task mcq --limit 10
+# Quick smoke test — 10 rows per task, longevity provider
+python evaluate.py --task effect  --limit 10
+python evaluate.py --task mcq     --limit 10
 python evaluate.py --task ternary --limit 10
-python evaluate.py --task set --limit 10
+python evaluate.py --task set     --limit 10
 python evaluate.py --task pairwise --think
-python evaluate.py --task regression --limit 10
-python evaluate.py --task sex_effect --limit 10
+python evaluate.py --task regression  --limit 10
+python evaluate.py --task sex_effect  --limit 10
+
+# Override endpoint URL
 python evaluate.py --endpoint https://<endpoint>/v1
+
+# Custom input/output dirs
 python evaluate.py --input-dir output --eval-dir output/eval
+
+# Gemini with a specific model, smoke test
+python evaluate.py --provider gemini --model gemini-2.0-flash --limit 10
+
+# Claude Opus with chain-of-thought thinking
+python evaluate.py --provider claude --model claude-opus-4-7 --think --limit 10
 ```
 
 ## Scoring
