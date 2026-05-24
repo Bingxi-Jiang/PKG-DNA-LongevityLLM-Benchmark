@@ -34,7 +34,11 @@ def main() -> None:
         "--provider",
         choices=list(PROVIDER_CONFIGS),
         default="longevity",
-        help="Model provider: longevity (HuggingFace endpoint), gemini, or claude. Default: longevity.",
+        help=(
+            "Model provider: "
+            + ", ".join(PROVIDER_CONFIGS)
+            + ". Default: longevity."
+        ),
     )
     parser.add_argument(
         "--model",

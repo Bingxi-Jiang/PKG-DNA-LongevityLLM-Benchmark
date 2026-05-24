@@ -39,6 +39,11 @@ PROVIDER_CONFIGS: dict[str, dict] = {
         "default_model": "claude-sonnet-4-6",
         "api_key_env": "ANTHROPIC_API_KEY",
     },
+    "openai": {
+        "endpoint": "https://api.openai.com/v1",
+        "default_model": "gpt-5.5",
+        "api_key_env": "OPENAI_API_KEY",
+    },
 }
 
 WORKERS = 6  # Stay <= 8 per hackathon guidance.
@@ -93,7 +98,7 @@ def make_client(provider: str, model: str | None = None, endpoint: str | None = 
             http_client=httpx.Client(timeout=300),
         )
 
-    else:  # claude
+    elif provider == "claude":
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise RuntimeError(
@@ -103,6 +108,18 @@ def make_client(provider: str, model: str | None = None, endpoint: str | None = 
             base_url=resolved_endpoint,
             api_key=api_key,
             default_headers={"anthropic-version": "2023-06-01"},
+            http_client=httpx.Client(timeout=300),
+        )
+
+    else:  # openai
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "Set OPENAI_API_KEY in your environment before running evaluation."
+            )
+        client = OpenAI(
+            base_url=resolved_endpoint,
+            api_key=api_key,
             http_client=httpx.Client(timeout=300),
         )
 
@@ -123,6 +140,10 @@ def call_model(row: dict, client, model: str, provider: str, enable_thinking: bo
     thinking_active = enable_thinking and provider in ("longevity", "claude")
     if thinking_active:
         max_tokens = 2000
+    elif provider == "openai":
+        # OpenAI reasoning models count hidden reasoning tokens against the
+        # completion budget, so keep enough room for a short visible answer.
+        max_tokens = 2000
     elif provider == "gemini":
         # Gemini 2.x+ runs server-side reasoning that consumes the output
         # budget before any visible text; 200 tokens truncates mid-thought.
@@ -133,9 +154,15 @@ def call_model(row: dict, client, model: str, provider: str, enable_thinking: bo
     create_kwargs: dict = dict(
         model=model,
         messages=messages,
-        max_tokens=max_tokens,
         temperature=0.0,
     )
+
+    if provider == "openai":
+        create_kwargs["max_completion_tokens"] = max_tokens
+        if model == PROVIDER_CONFIGS["openai"]["default_model"]:
+            create_kwargs["reasoning_effort"] = "none"
+    else:
+        create_kwargs["max_tokens"] = max_tokens
 
     if provider == "longevity":
         create_kwargs["extra_body"] = {

@@ -328,12 +328,19 @@ Run against Anthropic Claude:
 ANTHROPIC_API_KEY=<your-key> python evaluate.py --provider claude --task all --split test
 ```
 
-To compare all three providers in parallel (separate terminals):
+Run against OpenAI:
+
+```bash
+OPENAI_API_KEY=<your-key> python evaluate.py --provider openai --task all --split test
+```
+
+To compare all four providers in parallel (separate terminals):
 
 ```bash
 HF_TOKEN=...         python evaluate.py --provider longevity --eval-dir output/eval
 GEMINI_API_KEY=...   python evaluate.py --provider gemini    --eval-dir output/eval
 ANTHROPIC_API_KEY=... python evaluate.py --provider claude   --eval-dir output/eval
+OPENAI_API_KEY=...   python evaluate.py --provider openai    --eval-dir output/eval
 ```
 
 Results land in separate files per provider, e.g.
@@ -346,6 +353,7 @@ Results land in separate files per provider, e.g.
 | `longevity` (default) | `longevity-llm` | `HF_TOKEN` |
 | `gemini` | `gemini-3.5-flash` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
 | `claude` | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| `openai` | `gpt-5.5` | `OPENAI_API_KEY` |
 
 Override the model with `--model <name>`, e.g.:
 
@@ -354,7 +362,8 @@ python evaluate.py --provider claude --model claude-opus-4-7 --think --task mcq
 ```
 
 Thinking (`--think`) is supported for `longevity` (via `chat_template_kwargs`)
-and `claude` (via Anthropic extended thinking). It is a no-op for `gemini`.
+and `claude` (via Anthropic extended thinking). It is a no-op for `gemini`
+and `openai`.
 
 Useful options:
 
@@ -379,6 +388,9 @@ python evaluate.py --provider gemini --model gemini-2.0-flash --limit 10
 
 # Claude Opus with chain-of-thought thinking
 python evaluate.py --provider claude --model claude-opus-4-7 --think --limit 10
+
+# OpenAI with the default GPT-5.5 model
+python evaluate.py --provider openai --limit 10
 ```
 
 ## Scoring
@@ -396,18 +408,18 @@ The evaluator strips model thinking traces before parsing final answers.
 
 ## Cross-Provider Comparison
 
-`compare.py` runs LongevityLLM, Gemini, and Claude on the same rows and prints
+`compare.py` runs LongevityLLM, Gemini, Claude, and OpenAI on the same rows and prints
 a side-by-side comparison along with a deterministic weighted-feature
 similarity baseline (K-nearest-neighbour majority vote over the training
 split, with feature weights `allele_type` 40%, `gene` 30%,
 `genetic_background` 30%).
 
 ```bash
-# All three providers + baseline on the effect task
+# All four providers + baseline on the effect task
 python compare.py --task effect --split test
 
 # Smoke test, skip Claude (no API key)
-python compare.py --task effect --providers longevity gemini --limit 20
+python compare.py --task effect --providers longevity gemini openai --limit 20
 
 # All tasks
 python compare.py --task all --split test --limit 30

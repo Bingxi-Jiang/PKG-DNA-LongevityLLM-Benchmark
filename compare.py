@@ -1,5 +1,5 @@
 """
-compare.py — Side-by-side comparison of LongevityLLM, Gemini, Claude, and a
+compare.py — Side-by-side comparison of LongevityLLM, Gemini, Claude, OpenAI, and a
 weighted-feature-similarity baseline on the benchmark tasks.
 
 Weighted similarity baseline mirrors the scoring logic described in the project:
@@ -10,7 +10,7 @@ Usage:
     python compare.py --task effect --split test --limit 30
     python compare.py --task ternary --split test
     python compare.py --task all --split test --limit 20
-    python compare.py --task effect --providers longevity gemini  # skip claude
+    python compare.py --task effect --providers longevity gemini openai  # skip claude
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from longevity_benchmark.eval.runner import TASK_FILE_PREFIX
 
 # ── constants ────────────────────────────────────────────────────────────────
 
-ALL_PROVIDERS = ["longevity", "gemini", "claude"]
+ALL_PROVIDERS = ["longevity", "gemini", "claude", "openai"]
 
 # Tasks where weighted-similarity baseline makes sense (classification only).
 BASELINE_TASKS = {"effect", "ternary", "mcq"}
@@ -55,6 +55,7 @@ PROVIDER_WORKERS = {
     "longevity": 6,
     "gemini":    2,
     "claude":    4,
+    "openai":    4,
 }
 
 # weighted-similarity baseline
@@ -416,7 +417,7 @@ def run_task(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compare LongevityLLM, Gemini, Claude, and a weighted-similarity baseline."
+        description="Compare LongevityLLM, Gemini, Claude, OpenAI, and a weighted-similarity baseline."
     )
     parser.add_argument(
         "--task", choices=[*list(TASK_FILE_PREFIX), "all"], default="effect",
