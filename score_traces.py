@@ -20,14 +20,16 @@ Usage:
         --results output/eval/results_effect_test_longevity_longevity-llm_think.jsonl \\
         --out output/eval/trace_scores_mgi_mutation_lifespan_direction_binary.jsonl
 
-    # Visualize every saved compare.py result as one grouped bar graph
+    # Visualize every saved evaluate.py result as one grouped bar graph
     python score_traces.py --plot-all \\
-        --plot-out output/compare/llm_task_performance.png
+        --eval-dir output/eval \\
+        --plot-out output/eval/llm_task_performance.png
 
 Evaluation result files are keyed by the CLI task alias, such as ``effect`` or
 ``ternary``. Dataset JSONL files use the longer descriptive names registered in
-``longevity_benchmark.eval.runner.TASK_FILE_PREFIX``. Plot mode reads
-``compare_*.json`` files emitted by ``compare.py``.
+``longevity_benchmark.eval.runner.TASK_FILE_PREFIX``. Plot mode reads the
+``summary_*.json`` and matching ``results_*.jsonl`` files emitted by
+``evaluate.py``.
 """
 
 from __future__ import annotations
@@ -141,6 +143,7 @@ def _mean_set_f1(rows: list[dict]) -> float:
 
 
 def _regression_performance(rows: list[dict]) -> float:
+    """Normalize regression MAE to a 0-1 higher-is-better plotting score."""
     pairs = [
         (gold, pred)
         for gold, pred in (
@@ -159,7 +162,7 @@ def _regression_performance(rows: list[dict]) -> float:
     return max(0.0, min(1.0, 1.0 - mae / gold_range))
 
 
-def _compare_performance(task: str, rows: list[dict]) -> float:
+def _result_rows_performance(task: str, rows: list[dict]) -> float:
     if task in {"effect", "ternary", "sex_effect"}:
         return _balanced_accuracy(rows)
     if task == "set":
@@ -174,51 +177,76 @@ def _task_label(task: str, split: str, include_split: bool) -> str:
     return f"{label}\n{split}" if include_split else label
 
 
-def _load_compare_records(
-    compare_dir: Path,
+def _summary_result_path(summary_path: Path, payload: dict) -> Path:
+    raw_path = payload.get("results_path")
+    if raw_path:
+        result_path = Path(str(raw_path))
+        if result_path.exists():
+            return result_path
+        return summary_path.with_name(result_path.name)
+    return summary_path.with_name(summary_path.name.replace("summary_", "results_", 1)).with_suffix(".jsonl")
+
+
+def _method_label(payload: dict) -> str:
+    label = str(payload.get("model") or payload.get("provider") or "unknown-model")
+    if payload.get("thinking"):
+        return f"{label} (think)"
+    return label
+
+
+def _summary_value(task: str, payload: dict, result_path: Path) -> float:
+    if result_path.exists():
+        return _result_rows_performance(task, _read_jsonl(result_path))
+
+    metric = str(payload.get("metric", ""))
+    if metric == "mae_days":
+        return float("nan")
+    try:
+        return float(payload.get("score"))
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _load_eval_records(
+    eval_dir: Path,
     split: str,
-    include_baseline: bool,
 ) -> list[dict]:
     records_by_key = {}
-    for path in sorted(compare_dir.glob("compare_*.json")):
+    for path in sorted(eval_dir.glob("summary_*.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             continue
         task = str(payload.get("task", ""))
         task_split = str(payload.get("split", ""))
-        methods = payload.get("methods") or {}
-        if not task or not task_split or not isinstance(methods, dict):
+        if not task or not task_split:
             continue
         if split != "all" and task_split != split:
             continue
 
-        for method, method_payload in methods.items():
-            if not include_baseline and str(method).lower() in {"similarity", "baseline"}:
-                continue
-            rows = method_payload.get("rows") if isinstance(method_payload, dict) else None
-            if not isinstance(rows, list):
-                continue
-            value = _compare_performance(task, rows)
-            if math.isnan(value):
-                continue
-            key = (task, task_split, str(method))
-            old = records_by_key.get(key)
-            if old is None or path.stat().st_mtime > old["_path"].stat().st_mtime:
-                records_by_key[key] = {
-                    "task": task,
-                    "split": task_split,
-                    "method": str(method),
-                    "value": value,
-                    "_path": path,
-                }
+        method = _method_label(payload)
+        result_path = _summary_result_path(path, payload)
+        value = _summary_value(task, payload, result_path)
+        if math.isnan(value):
+            continue
+        key = (task, task_split, method)
+        old = records_by_key.get(key)
+        if old is None or path.stat().st_mtime > old["_path"].stat().st_mtime:
+            records_by_key[key] = {
+                "task": task,
+                "split": task_split,
+                "method": method,
+                "value": value,
+                "_path": path,
+                "_result_path": result_path,
+            }
     return list(records_by_key.values())
 
 
-def plot_all_results(compare_dir: Path, out_path: Path, split: str, include_baseline: bool) -> None:
-    rows = _load_compare_records(compare_dir, split, include_baseline)
+def plot_all_results(eval_dir: Path, out_path: Path, split: str) -> None:
+    rows = _load_eval_records(eval_dir, split)
     if not rows:
-        raise SystemExit(f"No plottable compare_*.json files found in {compare_dir} for split={split}.")
+        raise SystemExit(f"No plottable summary_*.json files found in {eval_dir} for split={split}.")
 
     rows = sorted(rows, key=lambda row: row["_path"].stat().st_mtime)
 
@@ -270,8 +298,8 @@ def plot_all_results(compare_dir: Path, out_path: Path, split: str, include_base
         )
         ax.bar_label(bars, labels=[f"{value:.2f}" for value in ys], fontsize=8, padding=2)
 
-    ax.set_title("LLM Performance Across Mouse Longevity Benchmark Tasks", pad=16)
-    ax.set_ylabel("Performance score (higher is better)")
+    ax.set_title("Model Performance Across Mouse Longevity Benchmark Tasks", pad=16)
+    ax.set_ylabel("Normalized performance score (higher is better)")
     ax.set_ylim(0, 1.08)
     ax.set_xticks(x_positions)
     ax.set_xticklabels(
@@ -297,7 +325,7 @@ def plot_all_results(compare_dir: Path, out_path: Path, split: str, include_base
     fig.text(
         0.01,
         0.015,
-        "Bars are computed from compare.py row outputs. Regression is normalized as 1 - MAE / gold lifespan range.",
+        "Classification bars use the task metric. Regression is not accuracy; it is normalized as 1 - MAE / gold lifespan range.",
         fontsize=9,
     )
     fig.tight_layout(rect=layout_rect)
@@ -324,22 +352,17 @@ def main() -> None:
     ap.add_argument(
         "--plot-all",
         action="store_true",
-        help="Write one bar graph comparing all saved compare.py outputs.",
+        help="Write one bar graph comparing all saved evaluate.py outputs.",
     )
     ap.add_argument(
-        "--compare-dir",
-        default="output/compare",
-        help="Directory containing compare_*.json files emitted by compare.py.",
+        "--eval-dir",
+        default="output/eval",
+        help="Directory containing summary_*.json and results_*.jsonl files emitted by evaluate.py.",
     )
     ap.add_argument(
         "--plot-out",
-        default="output/compare/llm_task_performance.png",
-        help="Path for the single comparison graph written by --plot-all.",
-    )
-    ap.add_argument(
-        "--plot-include-baseline",
-        action="store_true",
-        help="Include non-LLM baselines such as similarity in the comparison graph.",
+        default="output/eval/llm_task_performance.png",
+        help="Path for the single model-performance graph written by --plot-all.",
     )
     ap.add_argument(
         "--split",
@@ -351,10 +374,9 @@ def main() -> None:
 
     if args.plot_all:
         plot_all_results(
-            Path(args.compare_dir),
+            Path(args.eval_dir),
             Path(args.plot_out),
             args.split,
-            args.plot_include_baseline,
         )
         return
 
@@ -386,7 +408,8 @@ def main() -> None:
     print("\n── Sub-score coverage and mean ─────────────────────────────")
     print(f"  {'dimension':<22}  {'coverage':>9}  {'mean(present)':>15}")
     dims = ["gene_validity", "allele_validity", "mp_validity",
-            "answer_consistency", "prompt_grounding"]
+            "answer_consistency", "prompt_grounding",
+            "knowledge_extension", "pathway_consistency"]
     coverage_stats: dict[str, list] = {d: [] for d in dims}
     for s in scored:
         for d in dims:

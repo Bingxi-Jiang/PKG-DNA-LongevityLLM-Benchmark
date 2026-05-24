@@ -334,17 +334,35 @@ Run against OpenAI:
 OPENAI_API_KEY=<your-key> python evaluate.py --provider openai --task all --split test
 ```
 
-To compare all four providers in parallel (separate terminals):
+Run every provider's default model from one command:
 
 ```bash
-HF_TOKEN=...         python evaluate.py --provider longevity --eval-dir output/eval
-GEMINI_API_KEY=...   python evaluate.py --provider gemini    --eval-dir output/eval
-ANTHROPIC_API_KEY=... python evaluate.py --provider claude   --eval-dir output/eval
-OPENAI_API_KEY=...   python evaluate.py --provider openai    --eval-dir output/eval
+python evaluate.py --providers all --task all --split test
+```
+
+Run selected providers' default models:
+
+```bash
+python evaluate.py --providers longevity gemini openai --task effect --limit 20
+```
+
+Run explicit model names:
+
+```bash
+python evaluate.py --models openai:gpt-5.5 claude:claude-sonnet-4-6 --task all
+```
+
+Run multiple models from one provider:
+
+```bash
+python evaluate.py --provider openai --models gpt-5.5 gpt-5.1 --task effect
 ```
 
 Results land in separate files per provider, e.g.
 `output/eval/results_effect_test_claude_claude-sonnet-4-6_nothink.jsonl`.
+Complete existing `results_*.jsonl` + `summary_*.json` pairs are skipped by
+default so repeated runs do not spend API calls again. Add `--rerun` to force
+a fresh run.
 
 ## Model Providers
 
@@ -360,6 +378,9 @@ Override the model with `--model <name>`, e.g.:
 ```bash
 python evaluate.py --provider claude --model claude-opus-4-7 --think --task mcq
 ```
+
+Task aliases accepted by `--task` are `effect`, `mcq`, `ternary`, `set`,
+`pairwise`, `regression`, `sex_effect`, and `all`.
 
 Thinking (`--think`) is supported for `longevity` (via `chat_template_kwargs`)
 and `claude` (via Anthropic extended thinking). It is a no-op for `gemini`
@@ -378,6 +399,7 @@ python evaluate.py --task regression  --limit 10
 python evaluate.py --task sex_effect  --limit 10
 
 # Override endpoint URL
+# Only valid when evaluating one provider/model.
 python evaluate.py --endpoint https://<endpoint>/v1
 
 # Custom input/output dirs
@@ -391,6 +413,9 @@ python evaluate.py --provider claude --model claude-opus-4-7 --think --limit 10
 
 # OpenAI with the default GPT-5.5 model
 python evaluate.py --provider openai --limit 10
+
+# Re-run even if matching output files already exist
+python evaluate.py --provider openai --task effect --rerun
 ```
 
 ## Scoring
@@ -404,35 +429,26 @@ python evaluate.py --provider openai --limit 10
 - Sex-effect task: balanced accuracy over Female longer, Male longer, and No
   significant difference.
 
+For regression, the per-row `correct` field is only exact numeric-string
+matching and should not be interpreted as accuracy. The regression metric is
+MAE days, where lower is better.
+
 The evaluator strips model thinking traces before parsing final answers.
 
-## Cross-Provider Comparison
+## Multi-Model Evaluation Output
 
-`compare.py` runs LongevityLLM, Gemini, Claude, and OpenAI on the same rows and prints
-a side-by-side comparison along with a deterministic weighted-feature
-similarity baseline (K-nearest-neighbour majority vote over the training
-split, with feature weights `allele_type` 40%, `gene` 30%,
-`genetic_background` 30%).
+`evaluate.py` is the single entry point for one model, selected providers, or
+explicit multi-model batches. Each task/model pair writes:
 
-```bash
-# All four providers + baseline on the effect task
-python compare.py --task effect --split test
+- `results_{task}_{split}_{provider}_{model}_{think}.jsonl` with per-row model
+  outputs, parsed predictions, correctness, timing, token counts, and metadata.
+- `summary_{task}_{split}_{provider}_{model}_{think}.json` with task, provider,
+  model, metric, score, baseline, row count, and optional trace-quality stats.
 
-# Smoke test, skip Claude (no API key)
-python compare.py --task effect --providers longevity gemini openai --limit 20
-
-# All tasks
-python compare.py --task all --split test --limit 30
-```
-
-Output sections:
-
-- Per-row table (gold + each method's prediction with ✓/✗).
-- Accuracy summary with bar chart.
-- Pairwise agreement matrix (how often methods agree with each other).
-- Rows-with-disagreement listing for manual inspection.
-
-Results are saved to `output/compare/compare_{task}_{split}_{methods}.json`.
+At the end of a multi-model run, `evaluate.py` prints a compact batch summary
+across all task/model pairs. `score_traces.py --plot-all` reads these saved
+evaluation summaries/results directly, so no separate comparison script is
+needed.
 
 ## Reasoning Trace Scoring
 
@@ -467,29 +483,22 @@ The per-row `results_*.jsonl` is extended with `trace_score` and
 `trace_subscores`, and the `summary_*.json` gets a `trace_quality` block
 with the global mean and hallucination counts.
 
-### Integration with cross-provider comparison
+### Multi-model trace scoring
 
-`compare.py --think` auto-scores traces for every provider that emits them
-(currently `longevity` and `claude`) and prints a fifth section comparing
-reasoning quality:
+`evaluate.py --think --score-traces` scores traces for every selected
+provider/model that emits them:
 
 ```bash
-python compare.py --task ternary --providers longevity claude --think --limit 30
+python evaluate.py --task ternary --providers longevity claude --think --score-traces --limit 30
 ```
 
 ```text
 ── Reasoning trace quality ─────────────────────
-  method              mean    cov  fab_gene  fab_allele  bad_mp
-  longevity          0.867  100%         0           0       0
-  claude             0.812   95%         1           0       0
+  Trace quality: mean=0.867  fabricated_genes=0  fabricated_alleles=0  invalid_mp_ids=0
 ```
 
-Columns:
-
-- `mean` — average aggregate trace score across rows that had a scorable trace.
-- `cov`  — fraction of rows that produced a scorable trace.
-- `fab_gene` / `fab_allele` — raw count of fabricated gene / allele symbols across all traces (mentioned in a gene context but not present in MGI).
-- `bad_mp` — count of `MP:` IDs cited that do not exist in the ontology.
+The summary JSON for each model receives a `trace_quality` block with the same
+aggregate values.
 
 ### Standalone scoring (for already-saved results)
 
@@ -505,18 +514,18 @@ lowest- and highest-scoring traces for manual review.
 Evaluation result files use the short CLI task alias, while dataset JSONL files
 use the longer descriptive names.
 
-To visualize all saved `compare.py` outputs in one graph:
+To visualize all saved `evaluate.py` outputs in one graph:
 
 ```bash
 python score_traces.py --plot-all \
-  --compare-dir output/compare \
-  --plot-out output/compare/llm_task_performance.png
+  --eval-dir output/eval \
+  --plot-out output/eval/llm_task_performance.png
 ```
 
-This writes a single grouped bar chart comparing the LLM methods saved by
-`compare.py` across tasks. Regression is normalized as `1 - MAE / gold lifespan
-range` so higher bars are better across the whole figure. The similarity
-baseline is excluded by default; add `--plot-include-baseline` to include it.
+This writes a single grouped bar chart comparing model names saved by
+`evaluate.py` across tasks. Classification tasks use their task metric, while
+regression is not accuracy; it is normalized as `1 - MAE / gold lifespan
+range` so higher bars are better across the whole figure.
 
 ## File Structure
 

@@ -59,6 +59,61 @@ TASK_FILE_PREFIX = {
 }
 
 
+def resolve_model(provider: str, model: str | None = None) -> str:
+    """Return the explicit model or the provider default without creating a client."""
+    if provider not in PROVIDER_CONFIGS:
+        raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(PROVIDER_CONFIGS)}")
+    return model or PROVIDER_CONFIGS[provider]["default_model"]
+
+
+def model_slug(model: str) -> str:
+    return model.replace("/", "-").replace(".", "-").replace(":", "-")
+
+
+def eval_output_paths(
+    eval_dir: str | Path,
+    task: str,
+    split: str,
+    provider: str,
+    model: str,
+    enable_thinking: bool,
+) -> tuple[Path, Path]:
+    think_tag = "think" if enable_thinking else "nothink"
+    file_tag = f"{provider}_{model_slug(model)}_{think_tag}"
+    eval_path = Path(eval_dir)
+    return (
+        eval_path / f"results_{task}_{split}_{file_tag}.jsonl",
+        eval_path / f"summary_{task}_{split}_{file_tag}.json",
+    )
+
+
+def _jsonl_row_count(path: Path) -> int:
+    with open(path, "r", encoding="utf-8") as f:
+        return sum(1 for line in f if line.strip())
+
+
+def _existing_complete_summary(
+    summary_path: Path,
+    log_path: Path,
+    expected_n: int,
+) -> dict | None:
+    if not summary_path.exists() or not log_path.exists():
+        return None
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary_n = int(summary.get("n", 0))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if summary_n < expected_n:
+        return None
+    try:
+        if _jsonl_row_count(log_path) < expected_n:
+            return None
+    except OSError:
+        return None
+    return summary
+
+
 def make_client(provider: str, model: str | None = None, endpoint: str | None = None) -> tuple:
     """Return (client, resolved_model_name) for the given provider."""
     try:
@@ -69,11 +124,8 @@ def make_client(provider: str, model: str | None = None, endpoint: str | None = 
             "Install evaluation dependencies first: pip install openai httpx scikit-learn"
         ) from exc
 
-    if provider not in PROVIDER_CONFIGS:
-        raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(PROVIDER_CONFIGS)}")
-
+    resolved_model = resolve_model(provider, model)
     cfg = PROVIDER_CONFIGS[provider]
-    resolved_model = model or cfg["default_model"]
     resolved_endpoint = endpoint or cfg["endpoint"]
 
     if provider == "longevity":
@@ -222,6 +274,7 @@ def run_eval(
     client,
     model: str,
     provider: str,
+    task: str,
     enable_thinking: bool,
     log_path: str | Path,
 ) -> list[dict]:
@@ -247,17 +300,46 @@ def run_eval(
                     n_errors += 1
                     print(f"  [{done}/{len(rows)}] ERROR: {exc}")
                     continue
-                correct = sum(r["correct"] for r in results)
-                acc = correct / len(results)
-                print(
-                    f"  [{done}/{len(rows)}]  acc={acc:.1%}  correct={correct}/{len(results)}"
-                    f"  api_errors={n_errors}",
-                    end="\r",
-                    flush=True,
-                )
+                print(_progress_line(done, len(rows), results, task, n_errors), end="\r", flush=True)
 
     print()
     return results
+
+
+def _progress_line(
+    done: int,
+    total: int,
+    results: list[dict],
+    task: str,
+    n_errors: int,
+) -> str:
+    if task == "regression":
+        pairs = [
+            (parse_float(str(result.get("gold", ""))), parse_float(str(result.get("pred", ""))))
+            for result in results
+        ]
+        valid_pairs = [(gold, pred) for gold, pred in pairs if gold is not None and pred is not None]
+        if valid_pairs:
+            mae = sum(abs(gold - pred) for gold, pred in valid_pairs) / len(valid_pairs)
+            metric_text = f"mae={mae:.1f}d  valid={len(valid_pairs)}/{len(results)}"
+        else:
+            metric_text = f"mae=n/a  valid=0/{len(results)}"
+    elif task == "set":
+        row_scores = [
+            set_f1(
+                parse_set_value(str(result.get("gold", ""))),
+                parse_set_value(str(result.get("pred", ""))),
+            )
+            for result in results
+        ]
+        mean_f1 = sum(row_scores) / len(row_scores) if row_scores else 0.0
+        exact = sum(result["correct"] for result in results)
+        metric_text = f"set_f1={mean_f1:.1%}  exact={exact}/{len(results)}"
+    else:
+        correct = sum(result["correct"] for result in results)
+        acc = correct / len(results)
+        metric_text = f"acc={acc:.1%}  correct={correct}/{len(results)}"
+    return f"  [{done}/{total}]  {metric_text}  api_errors={n_errors}"
 
 
 def parse_set_value(value: str) -> set[str]:
@@ -358,27 +440,49 @@ def evaluate_task(
     enable_thinking: bool,
     limit: int | None,
     score_traces: bool = False,
-) -> None:
+    skip_existing: bool = True,
+) -> dict | None:
     data_path = Path(input_dir) / f"{TASK_FILE_PREFIX[task]}_{split}.jsonl"
     if not data_path.exists():
         print(f"File not found: {data_path} - skipping")
-        return
+        return None
 
     rows = load_jsonl(data_path)
     if limit:
         rows = rows[:limit]
 
-    model_slug = model.replace("/", "-").replace(".", "-")
-    think_tag = "think" if enable_thinking else "nothink"
-    file_tag = f"{provider}_{model_slug}_{think_tag}"
+    log_path, summary_path = eval_output_paths(
+        eval_dir,
+        task,
+        split,
+        provider,
+        model,
+        enable_thinking,
+    )
 
-    log_path = Path(eval_dir) / f"results_{task}_{split}_{file_tag}.jsonl"
+    if skip_existing:
+        existing = _existing_complete_summary(summary_path, log_path, len(rows))
+        if existing is not None:
+            existing["status"] = "skipped"
+            existing["results_path"] = str(log_path)
+            existing["summary_path"] = str(summary_path)
+            print(
+                f"Skipping {task} | split={split} | provider={provider} | model={model} "
+                f"| existing n={existing.get('n')} -> {summary_path}"
+            )
+            return existing
+
+    if client is None:
+        raise RuntimeError(
+            f"No client available for {provider}:{model}; cannot run missing evaluation."
+        )
+
     print(f"\n{'=' * 50}")
     print(f"Running {task} | split={split} | provider={provider} | model={model} | n={len(rows)} | thinking={enable_thinking}")
     print(f"Logging -> {log_path}")
     print(f"{'=' * 50}")
 
-    results = run_eval(rows, client, model, provider, enable_thinking, log_path)
+    results = run_eval(rows, client, model, provider, task, enable_thinking, log_path)
     score, metric, baseline = report_metrics(results, task)
 
     summary = {
@@ -391,6 +495,7 @@ def evaluate_task(
         "score": round(score, 4),
         "metric": metric,
         "baseline": round(baseline, 4),
+        "results_path": str(log_path),
     }
 
     # Optional reasoning-trace scoring (only useful when thinking was enabled).
@@ -415,7 +520,9 @@ def evaluate_task(
             )
             summary["trace_quality"] = trace_summary
 
-    summary_path = Path(eval_dir) / f"summary_{task}_{split}_{file_tag}.json"
     with open(summary_path, "w", encoding="utf-8") as summary_file:
         json.dump(summary, summary_file, indent=2)
     print(f"Summary -> {summary_path}")
+    summary["summary_path"] = str(summary_path)
+    summary["status"] = "ran"
+    return summary
