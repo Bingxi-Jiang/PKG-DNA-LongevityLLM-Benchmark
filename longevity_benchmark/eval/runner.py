@@ -31,7 +31,7 @@ PROVIDER_CONFIGS: dict[str, dict] = {
     },
     "gemini": {
         "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "default_model": "gemini-2.0-flash",
+        "default_model": "gemini-3.5-flash",
         "api_key_env": "GEMINI_API_KEY",
     },
     "claude": {

@@ -341,7 +341,7 @@ Results land in separate files per provider, e.g.
 | Provider flag | Default model | API key env var |
 | --- | --- | --- |
 | `longevity` (default) | `longevity-llm` | `HF_TOKEN` |
-| `gemini` | `gemini-2.0-flash` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
+| `gemini` | `gemini-3.5-flash` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
 | `claude` | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 
 Override the model with `--model <name>`, e.g.:
