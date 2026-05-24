@@ -102,10 +102,11 @@ def _similarity_predict(test_feat: dict, train_rows: list[dict]) -> str:
 
 def run_similarity_baseline(test_rows: list[dict], train_rows: list[dict]) -> list[dict]:
     results = []
-    for row in test_rows:
+    for idx, row in enumerate(test_rows):
         gold = row["messages"][-1]["content"].strip()
         pred = _similarity_predict(_extract_features(row), train_rows)
         results.append({
+            "_row_idx": idx,
             "lb_id":   row["lb_id"],
             "gold":    gold,
             "pred":    pred,
@@ -137,14 +138,17 @@ def run_provider(
     workers = PROVIDER_WORKERS.get(provider, 4)
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {
-            ex.submit(call_model, row, client, model, provider, enable_thinking): row
-            for row in test_rows
+            ex.submit(call_model, row, client, model, provider, enable_thinking): idx
+            for idx, row in enumerate(test_rows)
         }
         done = 0
         for fut in as_completed(futs):
             done += 1
+            idx = futs[fut]
             try:
-                results.append(fut.result())
+                r = fut.result()
+                r["_row_idx"] = idx
+                results.append(r)
             except Exception as exc:  # noqa: BLE001
                 n_errors += 1
                 print(f"  [{provider}] row error: {exc}")
@@ -169,8 +173,8 @@ def _accuracy(results: list[dict]) -> float:
 
 def _agreement(a: list[dict], b: list[dict]) -> float:
     """Fraction of rows where two methods predict the same label."""
-    pred_a = {r["lb_id"]: r.get("pred") or r.get("answer") for r in a}
-    pred_b = {r["lb_id"]: r.get("pred") or r.get("answer") for r in b}
+    pred_a = {r["_row_idx"]: r.get("pred") or r.get("answer") for r in a}
+    pred_b = {r["_row_idx"]: r.get("pred") or r.get("answer") for r in b}
     shared = [k for k in pred_a if k in pred_b]
     if not shared:
         return float("nan")
@@ -195,18 +199,17 @@ def print_row_table(all_results: dict[str, list[dict]], test_rows: list[dict]) -
     print(header)
     print(sep)
 
-    gold_map = {row["lb_id"]: row["messages"][-1]["content"].strip() for row in test_rows}
+    gold_map = {idx: row["messages"][-1]["content"].strip() for idx, row in enumerate(test_rows)}
     pred_maps = {
-        name: {r["lb_id"]: (r.get("pred") or r.get("answer") or "?") for r in res}
+        name: {r["_row_idx"]: (r.get("pred") or r.get("answer") or "?") for r in res}
         for name, res in all_results.items()
     }
 
-    for i, row in enumerate(test_rows, 1):
-        lid  = row["lb_id"]
-        gold = gold_map[lid]
-        line = f"{i:<4} {gold:<14}"
+    for i, row in enumerate(test_rows):
+        gold = gold_map[i]
+        line = f"{i + 1:<4} {gold:<14}"
         for name in names:
-            pred   = pred_maps[name].get(lid, "?")
+            pred   = pred_maps[name].get(i, "?")
             marker = "✓" if pred == gold else "✗"
             cell   = f"{marker} {pred}"
             line  += f" {cell:<{col_w}}"
@@ -291,37 +294,33 @@ def print_summary_table(all_results: dict[str, list[dict]], n_total: int) -> Non
 # per-provider disagreement with gold
 
 def print_disagreement(all_results: dict[str, list[dict]], test_rows: list[dict]) -> None:
-    gold_map = {row["lb_id"]: row["messages"][-1]["content"].strip() for row in test_rows}
+    gold_map = {idx: row["messages"][-1]["content"].strip() for idx, row in enumerate(test_rows)}
     pred_maps = {
-        name: {r["lb_id"]: (r.get("pred") or r.get("answer") or "?") for r in res}
+        name: {r["_row_idx"]: (r.get("pred") or r.get("answer") or "?") for r in res}
         for name, res in all_results.items()
     }
 
-    disagreed_rows = [
-        row for row in test_rows
-        if len({pm.get(row["lb_id"], "?") for pm in pred_maps.values()}) > 1
-        or any(
-            pm.get(row["lb_id"], "?") != gold_map[row["lb_id"]]
-            for pm in pred_maps.values()
-        )
+    disagreed = [
+        idx for idx in range(len(test_rows))
+        if len({pm.get(idx, "?") for pm in pred_maps.values()}) > 1
+        or any(pm.get(idx, "?") != gold_map[idx] for pm in pred_maps.values())
     ]
 
-    if not disagreed_rows:
+    if not disagreed:
         print("── All methods agreed on every row.\n")
         return
 
-    print(f"── Rows with disagreement ({len(disagreed_rows)}/{len(test_rows)}) " + "─" * 20)
+    print(f"── Rows with disagreement ({len(disagreed)}/{len(test_rows)}) " + "─" * 20)
     col_w = 14
     names = list(all_results.keys())
     shorts = [_short_label(n) for n in names]
-    header = f"  {'lb_id':<14} {'Gold':<14}" + "".join(f" {s:<{col_w}}" for s in shorts)
+    header = f"  {'#':<6} {'Gold':<14}" + "".join(f" {s:<{col_w}}" for s in shorts)
     print(header)
-    for row in disagreed_rows:
-        lid  = row["lb_id"]
-        gold = gold_map[lid]
-        line = f"  {lid:<14} {gold:<14}"
+    for idx in disagreed:
+        gold = gold_map[idx]
+        line = f"  {idx + 1:<6} {gold:<14}"
         for name in names:
-            pred   = pred_maps[name].get(lid, "?")
+            pred   = pred_maps[name].get(idx, "?")
             marker = "✓" if pred == gold else "✗"
             line  += f" {marker}{pred:<{col_w - 1}}"
         print(line)
